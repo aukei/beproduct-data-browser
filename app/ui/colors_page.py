@@ -1,0 +1,190 @@
+"""
+Color Palettes page: list + detail/edit with push-back.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Optional
+
+import pandas as pd
+import streamlit as st
+
+from app import db
+from app.push import push_color
+
+
+def render_colors_page() -> None:
+    st.header("🎨 Color Palettes")
+
+    selected_id = st.session_state.get("color_selected_id")
+    if selected_id:
+        _render_color_detail(selected_id)
+        return
+
+    _render_colors_list()
+
+
+def _render_colors_list() -> None:
+    st.subheader("All Color Palettes")
+
+    col1, col2, col3 = st.columns([3, 2, 1])
+    with col1:
+        search = st.text_input("🔍 Search by number or name", key="col_search")
+    with col2:
+        all_cols = db.get_colors(limit=5000)
+        folders: dict[str, str] = {}
+        for c in all_cols:
+            fid = c.get("folder_id") or ""
+            fname = c.get("folder_name") or "(no folder)"
+            if fid:
+                folders[fid] = fname
+        folder_options = ["All Folders"] + [f"{fname} ({fid[:8]}…)" for fid, fname in folders.items()]
+        folder_sel = st.selectbox("📁 Folder", options=folder_options, key="col_folder_sel")
+    with col3:
+        dirty_only = st.checkbox("Pending only", key="col_dirty_only")
+
+    selected_folder_id: Optional[str] = None
+    if folder_sel != "All Folders":
+        idx = folder_options.index(folder_sel) - 1
+        selected_folder_id = list(folders.keys())[idx]
+
+    colors = db.get_colors(
+        folder_id=selected_folder_id,
+        search=search or None,
+        limit=500,
+        dirty_only=dirty_only,
+    )
+
+    if not colors:
+        st.info("No color palettes found. Run a sync to populate data from BeProduct.")
+        return
+
+    rows = []
+    for c in colors:
+        rows.append({
+            "ID": c["id"],
+            "Number": c.get("header_number", ""),
+            "Name": c.get("header_name", ""),
+            "Folder": c.get("folder_name", ""),
+            "Active": "✅" if c.get("active") else "❌",
+            "Modified": (c.get("modified_at") or "")[:10],
+            "Status": "🔴 Pending push" if c.get("is_dirty") else "✅ Synced",
+        })
+
+    df = pd.DataFrame(rows)
+    st.caption(f"Showing {len(df)} record(s)")
+
+    event = st.dataframe(
+        df.drop(columns=["ID"]),
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+    )
+
+    if event and event.selection and event.selection.rows:
+        row_idx = event.selection.rows[0]
+        color_id = df.iloc[row_idx]["ID"]
+        st.session_state["color_selected_id"] = color_id
+        st.rerun()
+
+
+def _render_color_detail(record_id: str) -> None:
+    row = db.get_color(record_id)
+    if not row:
+        st.error(f"Color palette {record_id} not found in local DB")
+        st.session_state.pop("color_selected_id", None)
+        return
+
+    data = json.loads(row["data_json"])
+
+    if st.button("← Back to list"):
+        st.session_state.pop("color_selected_id", None)
+        st.rerun()
+
+    st.subheader(f"Palette: {row.get('header_number', '')} — {row.get('header_name', '')}")
+
+    if row.get("is_dirty"):
+        st.warning("⚠️ This record has unpushed local changes.")
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Folder", row.get("folder_name", "—"))
+    col2.metric("Active", "Yes" if row.get("active") else "No")
+    col3.metric("Modified", (row.get("modified_at") or "")[:10])
+
+    st.divider()
+
+    # Editable attribute fields
+    st.subheader("📝 Attributes")
+    header_data = data.get("headerData", {})
+    fields_list = header_data.get("fields", [])
+    READONLY_TYPES = {"UserLabel", "Auto"}
+    READONLY_IDS = {"created_by", "modified_by", "version"}
+
+    edited_fields = []
+    with st.form(key=f"col_form_{record_id}"):
+        for field in fields_list:
+            fid = field.get("id", "")
+            fname = field.get("name", fid)
+            ftype = field.get("type", "Text")
+            fval = field.get("value") or ""
+            readonly = ftype in READONLY_TYPES or fid in READONLY_IDS
+
+            if readonly:
+                st.text_input(fname, value=str(fval), disabled=True, key=f"cf_{fid}")
+                edited_fields.append(field)
+            elif ftype == "TrueFalse":
+                new_val = st.checkbox(fname, value=str(fval).lower() in ("yes", "true", "1"), key=f"cf_{fid}")
+                edited_fields.append({**field, "value": "Yes" if new_val else "No"})
+            else:
+                new_val = st.text_input(fname, value=str(fval), key=f"cf_{fid}")
+                edited_fields.append({**field, "value": new_val})
+
+        col_save, col_push = st.columns(2)
+        save_clicked = col_save.form_submit_button("💾 Save Locally", use_container_width=True)
+        push_clicked = col_push.form_submit_button("🚀 Push to BeProduct", use_container_width=True, type="primary")
+
+    if save_clicked:
+        updated_data = dict(data)
+        updated_data["headerData"] = {**header_data, "fields": edited_fields}
+        updated_data["headerName"] = next(
+            (f["value"] for f in edited_fields if f["id"] == "header_name"), data.get("headerName")
+        )
+        db.update_color_local(record_id, updated_data)
+        st.success("Saved locally. Click **Push to BeProduct** to sync.")
+        st.rerun()
+
+    if push_clicked:
+        with st.spinner("Pushing to BeProduct…"):
+            ok, msg = push_color(record_id)
+        if ok:
+            st.success(msg)
+        else:
+            st.error(msg)
+        st.rerun()
+
+    # Color swatches table
+    colors_list = data.get("colors", [])
+    if colors_list:
+        st.divider()
+        st.subheader("🖌️ Colors in Palette")
+        color_rows = []
+        for c in colors_list:
+            hex_val = c.get("hex", "")
+            color_rows.append({
+                "Number": c.get("colorNumber", ""),
+                "Name": c.get("colorName", ""),
+                "Hex": f"#{hex_val}" if hex_val and not hex_val.startswith("#") else hex_val,
+            })
+        st.dataframe(
+            pd.DataFrame(color_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Hex": st.column_config.TextColumn("Hex Color"),
+            },
+        )
+
+    with st.expander("🔍 Raw JSON", expanded=False):
+        st.json(data)
