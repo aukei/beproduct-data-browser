@@ -1,4 +1,4 @@
-beproduct>=1.0.0
+beproduct>=0.6.30
 streamlit>=1.32.0
 apscheduler>=3.10.4
 python-dotenv>=1.0.0
