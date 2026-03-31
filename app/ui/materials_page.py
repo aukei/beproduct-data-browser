@@ -90,6 +90,28 @@ def _render_materials_list() -> None:
         st.session_state["material_selected_id"] = mat_id
         st.rerun()
 
+    # ── Raw JSON View ──────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📄 Raw JSON View")
+
+    if "material_raw_expanded" not in st.session_state:
+        st.session_state["material_raw_expanded"] = set()
+
+    for m in materials:
+        mat_id = m["id"]
+        label = f"📄 {m.get('header_number', mat_id[:8])} — {m.get('header_name', 'Unnamed')}"
+        is_expanded = mat_id in st.session_state["material_raw_expanded"]
+
+        if st.button(label, key=f"raw_btn_mat_{mat_id}", use_container_width=True):
+            if is_expanded:
+                st.session_state["material_raw_expanded"].discard(mat_id)
+            else:
+                st.session_state["material_raw_expanded"].add(mat_id)
+            st.rerun()
+
+        if is_expanded:
+            st.json(m.get("data_json") or m)
+
 
 def _render_material_detail(record_id: str) -> None:
     row = db.get_material(record_id)

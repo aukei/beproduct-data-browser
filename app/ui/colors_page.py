@@ -89,6 +89,28 @@ def _render_colors_list() -> None:
         st.session_state["color_selected_id"] = color_id
         st.rerun()
 
+    # ── Raw JSON View ──────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📄 Raw JSON View")
+
+    if "color_raw_expanded" not in st.session_state:
+        st.session_state["color_raw_expanded"] = set()
+
+    for c in colors:
+        color_id = c["id"]
+        label = f"📄 {c.get('header_number', color_id[:8])} — {c.get('header_name', 'Unnamed')}"
+        is_expanded = color_id in st.session_state["color_raw_expanded"]
+
+        if st.button(label, key=f"raw_btn_color_{color_id}", use_container_width=True):
+            if is_expanded:
+                st.session_state["color_raw_expanded"].discard(color_id)
+            else:
+                st.session_state["color_raw_expanded"].add(color_id)
+            st.rerun()
+
+        if is_expanded:
+            st.json(c.get("data_json") or c)
+
 
 def _render_color_detail(record_id: str) -> None:
     row = db.get_color(record_id)

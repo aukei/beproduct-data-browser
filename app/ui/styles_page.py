@@ -99,6 +99,33 @@ def _render_styles_list() -> None:
         st.session_state["style_selected_id"] = style_id
         st.rerun()
 
+    # ── Raw JSON View ──────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📄 Raw JSON View")
+
+    # Initialize raw expanded state
+    if "style_raw_expanded" not in st.session_state:
+        st.session_state["style_raw_expanded"] = set()
+
+    # Show toggle buttons for each style
+    for s in styles:
+        style_id = s["id"]
+        label = f"📄 {s.get('header_number', style_id[:8])} — {s.get('header_name', 'Unnamed')}"
+        is_expanded = style_id in st.session_state["style_raw_expanded"]
+
+        if st.button(label, key=f"raw_btn_style_{style_id}", use_container_width=True):
+            if is_expanded:
+                st.session_state["style_raw_expanded"].discard(style_id)
+            else:
+                st.session_state["style_raw_expanded"].add(style_id)
+            st.rerun()
+
+        if is_expanded:
+            st.json(s.get("data_json") or s)
+
+        if style_id in st.session_state["style_raw_expanded"]:
+            st.json(s.get("data_json") or s)
+
 
 def _render_style_detail(record_id: str) -> None:
     row = db.get_style(record_id)

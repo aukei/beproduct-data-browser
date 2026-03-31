@@ -20,6 +20,7 @@ from typing import Callable, Optional
 
 from app import db
 from app.beproduct_client import get_client
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 

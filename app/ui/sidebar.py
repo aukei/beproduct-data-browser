@@ -86,10 +86,13 @@ def _render_sync_controls() -> None:
         if st.button("🔄 Incremental", use_container_width=True, help="Sync only records modified since last sync"):
             _trigger_sync(force_full=False)
 
-    if st.session_state.get("_sync_status"):
-        status = st.session_state["_sync_status"]
+    # Check if sync completed and clear the status after displaying it
+    status = st.session_state.get("_sync_status")
+    if status:
         if status.get("running"):
             st.info("⏳ Sync in progress…")
+            # Schedule a rerun to check status again shortly
+            st.rerun()
         elif status.get("results"):
             results = status["results"]
             all_ok = all(ok for ok, _ in results.values())
@@ -101,6 +104,8 @@ def _render_sync_controls() -> None:
                 for entity, (ok, msg) in results.items():
                     icon = "✅" if ok else "❌"
                     st.write(f"{icon} **{entity}**: {msg}")
+            # Clear the status after displaying so it doesn't persist
+            st.session_state["_sync_status"] = None
 
 
 def _trigger_sync(force_full: bool) -> None:

@@ -75,6 +75,28 @@ def _render_directory_list() -> None:
         st.session_state["directory_selected_id"] = rec_id
         st.rerun()
 
+    # ── Raw JSON View ──────────────────────────────────────────────────────
+    st.divider()
+    st.subheader("📄 Raw JSON View")
+
+    if "directory_raw_expanded" not in st.session_state:
+        st.session_state["directory_raw_expanded"] = set()
+
+    for r in records:
+        rec_id = r["id"]
+        label = f"📄 {r.get('directory_id', rec_id[:8])} — {r.get('name', 'Unnamed')} ({r.get('partner_type', '')})"
+        is_expanded = rec_id in st.session_state["directory_raw_expanded"]
+
+        if st.button(label, key=f"raw_btn_dir_{rec_id}", use_container_width=True):
+            if is_expanded:
+                st.session_state["directory_raw_expanded"].discard(rec_id)
+            else:
+                st.session_state["directory_raw_expanded"].add(rec_id)
+            st.rerun()
+
+        if is_expanded:
+            st.json(r.get("data_json") or r)
+
 
 def _render_directory_detail(record_id: str) -> None:
     row = db.get_directory_record(record_id)
