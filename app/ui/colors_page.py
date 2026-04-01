@@ -14,6 +14,19 @@ from app import db
 from app.push import push_color
 
 
+# ── Raw JSON Dialog ──────────────────────────────────────────────────────
+@st.dialog("📄 Raw JSON")
+def raw_json_dialog(data: dict) -> None:
+    """Show raw JSON in a modal dialog."""
+    st.json(data)
+
+
+def _show_raw_button(color_id: str, raw_data: dict, label: str) -> None:
+    """Render a raw JSON button for a color row."""
+    if st.button("📄", key=f"raw_{color_id}", help=f"View raw JSON for {label}"):
+        raw_json_dialog(raw_data)
+
+
 def render_colors_page() -> None:
     st.header("🎨 Color Palettes")
 
@@ -89,27 +102,21 @@ def _render_colors_list() -> None:
         st.session_state["color_selected_id"] = color_id
         st.rerun()
 
-    # ── Raw JSON View ──────────────────────────────────────────────────────
+    # Raw JSON buttons - displayed as a compact grid below table
     st.divider()
-    st.subheader("📄 Raw JSON View")
-
-    if "color_raw_expanded" not in st.session_state:
-        st.session_state["color_raw_expanded"] = set()
-
-    for c in colors:
-        color_id = c["id"]
-        label = f"📄 {c.get('header_number', color_id[:8])} — {c.get('header_name', 'Unnamed')}"
-        is_expanded = color_id in st.session_state["color_raw_expanded"]
-
-        if st.button(label, key=f"raw_btn_color_{color_id}", use_container_width=True):
-            if is_expanded:
-                st.session_state["color_raw_expanded"].discard(color_id)
-            else:
-                st.session_state["color_raw_expanded"].add(color_id)
-            st.rerun()
-
-        if is_expanded:
-            st.json(c.get("data_json") or c)
+    st.subheader("📄 Raw JSON")
+    cols_per_row = min(8, len(colors))
+    if cols_per_row > 0:
+        for i in range(0, len(colors), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(colors):
+                    c = colors[i + j]
+                    color_id = c["id"]
+                    short_label = c.get('header_number', color_id[:8])
+                    with col:
+                        if st.button(f"📄 {short_label}", key=f"raw_{color_id}", help=f"View raw JSON"):
+                            raw_json_dialog(c.get("data_json") or c)
 
 
 def _render_color_detail(record_id: str) -> None:

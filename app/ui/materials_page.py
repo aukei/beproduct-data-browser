@@ -15,6 +15,19 @@ from app import db
 from app.push import push_material
 
 
+# ── Raw JSON Dialog ──────────────────────────────────────────────────────
+@st.dialog("📄 Raw JSON")
+def raw_json_dialog(data: dict) -> None:
+    """Show raw JSON in a modal dialog."""
+    st.json(data)
+
+
+def _show_raw_button(mat_id: str, raw_data: dict, label: str) -> None:
+    """Render a raw JSON button for a material row."""
+    if st.button("📄", key=f"raw_{mat_id}", help=f"View raw JSON for {label}"):
+        raw_json_dialog(raw_data)
+
+
 def render_materials_page() -> None:
     st.header("🧵 Materials")
 
@@ -90,27 +103,21 @@ def _render_materials_list() -> None:
         st.session_state["material_selected_id"] = mat_id
         st.rerun()
 
-    # ── Raw JSON View ──────────────────────────────────────────────────────
+    # Raw JSON buttons - displayed as a compact grid below table
     st.divider()
-    st.subheader("📄 Raw JSON View")
-
-    if "material_raw_expanded" not in st.session_state:
-        st.session_state["material_raw_expanded"] = set()
-
-    for m in materials:
-        mat_id = m["id"]
-        label = f"📄 {m.get('header_number', mat_id[:8])} — {m.get('header_name', 'Unnamed')}"
-        is_expanded = mat_id in st.session_state["material_raw_expanded"]
-
-        if st.button(label, key=f"raw_btn_mat_{mat_id}", use_container_width=True):
-            if is_expanded:
-                st.session_state["material_raw_expanded"].discard(mat_id)
-            else:
-                st.session_state["material_raw_expanded"].add(mat_id)
-            st.rerun()
-
-        if is_expanded:
-            st.json(m.get("data_json") or m)
+    st.subheader("📄 Raw JSON")
+    cols_per_row = min(8, len(materials))
+    if cols_per_row > 0:
+        for i in range(0, len(materials), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(materials):
+                    m = materials[i + j]
+                    mat_id = m["id"]
+                    short_label = m.get('header_number', mat_id[:8])
+                    with col:
+                        if st.button(f"📄 {short_label}", key=f"raw_{mat_id}", help=f"View raw JSON"):
+                            raw_json_dialog(m.get("data_json") or m)
 
 
 def _render_material_detail(record_id: str) -> None:

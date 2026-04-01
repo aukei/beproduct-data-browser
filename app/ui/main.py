@@ -5,9 +5,9 @@ Run with:
     streamlit run app/ui/main.py
 
 The app:
-1. Initialises the SQLite schema on first start
-2. Starts the APScheduler background sync job
-3. Renders sidebar navigation + main content area
+ 1. Initialises the SQLite schema on first start
+ 2. Starts the APScheduler background sync job
+ 3. Renders sidebar navigation + main content area
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import sys
 import os
+import atexit
 
 import streamlit as st
 
@@ -66,6 +67,15 @@ def _startup():
         logging.getLogger(__name__).info(
             f"Background sync scheduler started (every {settings.SYNC_INTERVAL_MINUTES} min)"
         )
+        
+        # Register shutdown handler to stop scheduler cleanly
+        def _shutdown():
+            logging.getLogger(__name__).info("Shutting down background scheduler...")
+            scheduler.shutdown(wait=False)
+            logging.getLogger(__name__).info("Scheduler shut down complete")
+        
+        atexit.register(_shutdown)
+        
         return scheduler
     except Exception as e:
         logging.getLogger(__name__).warning(f"Could not start scheduler: {e}")

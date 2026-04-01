@@ -474,37 +474,73 @@ def mark_color_clean(record_id: str) -> None:
 # Directory
 # ---------------------------------------------------------------------------
 
-def upsert_directory_record(record: dict[str, Any]) -> None:
+def upsert_directory_record(record: dict[str, Any]) -> bool:
+    """Insert or update a directory record. Returns True if the record was new or changed."""
     synced_at = _now_iso()
     data_json = json.dumps(record)
 
     with get_conn() as conn:
-        conn.execute(
-            """
-            INSERT INTO directory
-                (id, directory_id, name, partner_type, country, active, synced_at, is_dirty, data_json)
-            VALUES (?,?,?,?,?,?,?,0,?)
-            ON CONFLICT(id) DO UPDATE SET
-                directory_id=excluded.directory_id,
-                name=excluded.name,
-                partner_type=excluded.partner_type,
-                country=excluded.country,
-                active=excluded.active,
-                synced_at=excluded.synced_at,
-                is_dirty=0,
-                data_json=excluded.data_json
-            """,
-            (
-                record.get("id"),
-                record.get("directoryId"),
-                record.get("name"),
-                record.get("partnerType"),
-                record.get("country"),
-                1 if record.get("active", False) else 0,
-                synced_at,
-                data_json,
-            ),
-        )
+        # Check if record exists and if data has changed
+        existing = conn.execute(
+            "SELECT data_json FROM directory WHERE id=?", (record["id"],)
+        ).fetchone()
+
+        if existing:
+            # Compare existing data with new data
+            if existing["data_json"] == data_json:
+                # No change - just update synced_at
+                conn.execute(
+                    "UPDATE directory SET synced_at=? WHERE id=?",
+                    (synced_at, record.get("id"))
+                )
+                return False
+            else:
+                # Data changed - update record
+                conn.execute(
+                    """
+                    UPDATE directory SET
+                        directory_id=?,
+                        name=?,
+                        partner_type=?,
+                        country=?,
+                        active=?,
+                        synced_at=?,
+                        is_dirty=0,
+                        data_json=?
+                    WHERE id=?
+                    """,
+                    (
+                        record.get("directoryId"),
+                        record.get("name"),
+                        record.get("partnerType"),
+                        record.get("country"),
+                        1 if record.get("active", False) else 0,
+                        synced_at,
+                        data_json,
+                        record.get("id"),
+                    ),
+                )
+                return True
+        else:
+            # New record - insert
+            conn.execute(
+                """
+                INSERT INTO directory
+                    (id, directory_id, name, partner_type, country, active, synced_at, is_dirty, data_json)
+                VALUES (?,?,?,?,?,?,?,0,?)
+                """,
+                (
+                    record.get("id"),
+                    record.get("directoryId"),
+                    record.get("name"),
+                    record.get("partnerType"),
+                    record.get("country"),
+                    1 if record.get("active", False) else 0,
+                    synced_at,
+                    data_json,
+                ),
+            )
+            return True
 
 
 def get_directory_records(

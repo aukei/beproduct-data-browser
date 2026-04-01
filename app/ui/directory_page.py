@@ -13,6 +13,19 @@ from app import db
 from app.push import push_directory
 
 
+# ── Raw JSON Dialog ──────────────────────────────────────────────────────
+@st.dialog("📄 Raw JSON")
+def raw_json_dialog(data: dict) -> None:
+    """Show raw JSON in a modal dialog."""
+    st.json(data)
+
+
+def _show_raw_button(rec_id: str, raw_data: dict, label: str) -> None:
+    """Render a raw JSON button for a directory row."""
+    if st.button("📄", key=f"raw_{rec_id}", help=f"View raw JSON for {label}"):
+        raw_json_dialog(raw_data)
+
+
 def render_directory_page() -> None:
     st.header("📒 Directory")
 
@@ -75,27 +88,21 @@ def _render_directory_list() -> None:
         st.session_state["directory_selected_id"] = rec_id
         st.rerun()
 
-    # ── Raw JSON View ──────────────────────────────────────────────────────
+    # Raw JSON buttons - displayed as a compact grid below table
     st.divider()
-    st.subheader("📄 Raw JSON View")
-
-    if "directory_raw_expanded" not in st.session_state:
-        st.session_state["directory_raw_expanded"] = set()
-
-    for r in records:
-        rec_id = r["id"]
-        label = f"📄 {r.get('directory_id', rec_id[:8])} — {r.get('name', 'Unnamed')} ({r.get('partner_type', '')})"
-        is_expanded = rec_id in st.session_state["directory_raw_expanded"]
-
-        if st.button(label, key=f"raw_btn_dir_{rec_id}", use_container_width=True):
-            if is_expanded:
-                st.session_state["directory_raw_expanded"].discard(rec_id)
-            else:
-                st.session_state["directory_raw_expanded"].add(rec_id)
-            st.rerun()
-
-        if is_expanded:
-            st.json(r.get("data_json") or r)
+    st.subheader("📄 Raw JSON")
+    cols_per_row = min(8, len(records))
+    if cols_per_row > 0:
+        for i in range(0, len(records), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(records):
+                    r = records[i + j]
+                    rec_id = r["id"]
+                    short_label = r.get('directory_id', rec_id[:8])
+                    with col:
+                        if st.button(f"📄 {short_label}", key=f"raw_{rec_id}", help=f"View raw JSON"):
+                            raw_json_dialog(r.get("data_json") or r)
 
 
 def _render_directory_detail(record_id: str) -> None:

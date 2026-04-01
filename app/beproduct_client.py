@@ -12,6 +12,7 @@ the same Python process.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ except ImportError:
     BeProduct = None  # type: ignore
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -53,14 +56,31 @@ def _capture_rate_limit_headers(headers: Any) -> None:
     BeProduct may use any of these common header patterns:
       X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
       RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset  (RFC draft)
+      X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Reset (case variation)
     """
     def _int(key: str) -> Optional[int]:
         v = headers.get(key)
         return int(v) if v is not None else None
 
-    limit = _int("X-RateLimit-Limit") or _int("RateLimit-Limit")
-    remaining = _int("X-RateLimit-Remaining") or _int("RateLimit-Remaining")
-    reset_raw = headers.get("X-RateLimit-Reset") or headers.get("RateLimit-Reset")
+    # Try multiple header name variations (case-insensitive)
+    limit = (
+        _int("X-RateLimit-Limit") or 
+        _int("RateLimit-Limit") or
+        _int("X-Ratelimit-Limit") or
+        _int("Ratelimit-Limit")
+    )
+    remaining = (
+        _int("X-RateLimit-Remaining") or 
+        _int("RateLimit-Remaining") or
+        _int("X-Ratelimit-Remaining") or
+        _int("Ratelimit-Remaining")
+    )
+    reset_raw = (
+        headers.get("X-RateLimit-Reset") or 
+        headers.get("RateLimit-Reset") or
+        headers.get("X-Ratelimit-Reset") or
+        headers.get("Ratelimit-Reset")
+    )
 
     with _rate_lock:
         _rate_state["last_checked"] = time.time()
@@ -81,10 +101,15 @@ def _capture_rate_limit_headers(headers: Any) -> None:
             except ValueError:
                 _rate_state["reset_at"] = str(reset_raw)
 
+        # Log header capture for debugging
+        if limit is not None or remaining is not None:
+            logger.debug(f"Rate limit headers captured: limit={limit}, remaining={remaining}, reset={reset_raw}")
+
 
 def _patch_requests_module() -> None:
     """
     Monkey-patch `requests.get` and `requests.post` to capture rate-limit headers.
+    Also patches Session.request to handle cases where the SDK uses a Session.
     Called once at client initialisation.
     """
     global _requests_patched
@@ -94,6 +119,7 @@ def _patch_requests_module() -> None:
 
         _original_get = requests.get
         _original_post = requests.post
+        _original_session_request = requests.Session.request
 
         def _patched_get(url, **kwargs):
             response = _original_get(url, **kwargs)
@@ -105,14 +131,21 @@ def _patch_requests_module() -> None:
             _capture_rate_limit_headers(response.headers)
             return response
 
+        def _patched_session_request(self, method, url, **kwargs):
+            response = _original_session_request(self, method, url, **kwargs)
+            _capture_rate_limit_headers(response.headers)
+            return response
+
         requests.get = _patched_get    # type: ignore[method-assign]
         requests.post = _patched_post  # type: ignore[method-assign]
+        requests.Session.request = _patched_session_request  # type: ignore[method-assign]
 
         # Also patch inside the beproduct._raw_api module where the SDK imports it
         try:
             import beproduct._raw_api as _raw_api_mod  # type: ignore
             _raw_api_mod.requests.get = _patched_get    # type: ignore
             _raw_api_mod.requests.post = _patched_post  # type: ignore
+            _raw_api_mod.requests.Session.request = _patched_session_request  # type: ignore
         except Exception:
             pass  # Non-fatal if module structure has changed
 

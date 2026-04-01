@@ -14,6 +14,19 @@ from app import db
 from app.push import push_style
 
 
+# ── Raw JSON Dialog ──────────────────────────────────────────────────────
+@st.dialog("📄 Raw JSON")
+def raw_json_dialog(data: dict) -> None:
+    """Show raw JSON in a modal dialog."""
+    st.json(data)
+
+
+def _show_raw_button(style_id: str, raw_data: dict, label: str) -> None:
+    """Render a raw JSON button for a style row."""
+    if st.button("📄", key=f"raw_{style_id}", help=f"View raw JSON for {label}"):
+        raw_json_dialog(raw_data)
+
+
 def render_styles_page() -> None:
     st.header("👗 Styles")
 
@@ -67,6 +80,10 @@ def _render_styles_list() -> None:
         st.info("No styles found. Run a sync to populate data from BeProduct.")
         return
 
+    # Store styles in session_state for button callbacks
+    if "styles_cache" not in st.session_state:
+        st.session_state["styles_cache"] = styles
+
     # Build display dataframe
     rows = []
     for s in styles:
@@ -92,39 +109,28 @@ def _render_styles_list() -> None:
         selection_mode="single-row",
     )
 
-    # Handle row selection
+    # Handle row selection for detail view
     if event and event.selection and event.selection.rows:
         row_idx = event.selection.rows[0]
         style_id = df.iloc[row_idx]["ID"]
         st.session_state["style_selected_id"] = style_id
         st.rerun()
 
-    # ── Raw JSON View ──────────────────────────────────────────────────────
+    # Raw JSON buttons - displayed as a compact grid below table
     st.divider()
-    st.subheader("📄 Raw JSON View")
-
-    # Initialize raw expanded state
-    if "style_raw_expanded" not in st.session_state:
-        st.session_state["style_raw_expanded"] = set()
-
-    # Show toggle buttons for each style
-    for s in styles:
-        style_id = s["id"]
-        label = f"📄 {s.get('header_number', style_id[:8])} — {s.get('header_name', 'Unnamed')}"
-        is_expanded = style_id in st.session_state["style_raw_expanded"]
-
-        if st.button(label, key=f"raw_btn_style_{style_id}", use_container_width=True):
-            if is_expanded:
-                st.session_state["style_raw_expanded"].discard(style_id)
-            else:
-                st.session_state["style_raw_expanded"].add(style_id)
-            st.rerun()
-
-        if is_expanded:
-            st.json(s.get("data_json") or s)
-
-        if style_id in st.session_state["style_raw_expanded"]:
-            st.json(s.get("data_json") or s)
+    st.subheader("📄 Raw JSON")
+    cols_per_row = min(8, len(styles))
+    if cols_per_row > 0:
+        for i in range(0, len(styles), cols_per_row):
+            cols = st.columns(cols_per_row)
+            for j, col in enumerate(cols):
+                if i + j < len(styles):
+                    s = styles[i + j]
+                    style_id = s["id"]
+                    short_label = s.get('header_number', style_id[:8])
+                    with col:
+                        if st.button(f"📄 {short_label}", key=f"raw_{style_id}", help=f"View raw JSON"):
+                            raw_json_dialog(s.get("data_json") or s)
 
 
 def _render_style_detail(record_id: str) -> None:

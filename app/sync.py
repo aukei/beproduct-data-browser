@@ -202,17 +202,24 @@ def sync_directory(
     with _locks["directory"]:
         try:
             client = get_client()
-            count = 0
+            total_count = 0
+            changed_count = 0
             for record in client.directory.directory_list():
-                db.upsert_directory_record(record)
-                count += 1
-                if count % 50 == 0:
-                    progress("directory", count)
+                total_count += 1
+                if db.upsert_directory_record(record):
+                    changed_count += 1
+                if total_count % 50 == 0:
+                    progress("directory", total_count)
 
             db.set_sync_meta("directory", sync_type="full")
-            msg = f"Synced {count} directory record(s)"
+            if changed_count == 0:
+                msg = f"Directory up to date ({total_count} records checked)"
+            elif changed_count == total_count:
+                msg = f"Synced {changed_count} directory record(s)"
+            else:
+                msg = f"Synced {changed_count} directory record(s) ({total_count} checked)"
             logger.info(msg)
-            progress("directory", count)
+            progress("directory", total_count)
             return True, msg
 
         except Exception as e:
