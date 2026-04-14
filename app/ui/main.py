@@ -115,9 +115,21 @@ def main() -> None:
         from app.ui.colors_page import render_colors_page
         render_colors_page()
 
+    elif "Images" in page:
+        from app.ui.images_page import render_images_page
+        render_images_page()
+
+    elif "Blocks" in page:
+        from app.ui.blocks_page import render_blocks_page
+        render_blocks_page()
+
     elif "Directory" in page:
         from app.ui.directory_page import render_directory_page
         render_directory_page()
+
+    elif "Users" in page:
+        from app.ui.users_page import render_users_page
+        render_users_page()
 
     else:  # Overview
         from app.ui.overview_page import render_overview_page

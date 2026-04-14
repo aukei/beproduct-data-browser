@@ -85,7 +85,16 @@ def render_sidebar() -> str:
         st.subheader("Navigate")
         page = st.radio(
             "Section",
-            options=["🏠 Overview", "👗 Styles", "🧵 Materials", "🎨 Colors", "📒 Directory"],
+            options=[
+                "🏠 Overview",
+                "👗 Styles",
+                "🧵 Materials",
+                "🎨 Colors",
+                "🖼️ Images",
+                "🧱 Blocks",
+                "📒 Directory",
+                "👤 Users",
+            ],
             label_visibility="collapsed",
         )
 
@@ -213,7 +222,7 @@ def _trigger_sync(force_full: bool) -> None:
 
 def _render_sync_meta() -> None:
     """Show last sync timestamp per entity."""
-    entities = ["styles", "materials", "colors", "directory"]
+    entities = ["styles", "materials", "colors", "directory", "images", "blocks", "users"]
     rows = []
     for e in entities:
         meta = db.get_sync_meta(e)
@@ -270,6 +279,9 @@ def _render_db_counts() -> None:
         st.metric("Styles", counts.get("styles", 0), delta=f"{counts.get('styles_dirty', 0)} pending" if counts.get('styles_dirty') else None)
         st.metric("Materials", counts.get("materials", 0), delta=f"{counts.get('materials_dirty', 0)} pending" if counts.get('materials_dirty') else None)
         st.metric("Colors", counts.get("colors", 0), delta=f"{counts.get('colors_dirty', 0)} pending" if counts.get('colors_dirty') else None)
+        st.metric("Images", counts.get("images", 0), delta=f"{counts.get('images_dirty', 0)} pending" if counts.get('images_dirty') else None)
+        st.metric("Blocks", counts.get("blocks", 0), delta=f"{counts.get('blocks_dirty', 0)} pending" if counts.get('blocks_dirty') else None)
         st.metric("Directory", counts.get("directory", 0))
+        st.metric("Users", counts.get("users", 0))
     except Exception as e:
         st.caption(f"DB not initialised: {e}")

@@ -119,7 +119,9 @@ def push_color(record_id: str) -> tuple[bool, str]:
         client = get_client()
 
         fields = _extract_fields(data.get("headerData", {}).get("fields", []))
-        colors = data.get("colors") or []
+        # Colors are now nested at headerData.colors.colors (not top-level data.colors)
+        colors_wrapper = data.get("headerData", {}).get("colors") or {}
+        colors = colors_wrapper.get("colors") or []
 
         client.color.attributes_update(
             header_id=record_id,
@@ -139,14 +141,81 @@ def push_color(record_id: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Image push-back
+# ---------------------------------------------------------------------------
+
+def push_image(record_id: str) -> tuple[bool, str]:
+    """Push a locally-modified image to BeProduct."""
+    row = db.get_image(record_id)
+    if not row:
+        return False, f"Image {record_id} not found in local DB"
+    if not row.get("is_dirty"):
+        return True, "No local changes to push"
+
+    try:
+        data = json.loads(row["data_json"])
+        client = get_client()
+
+        fields = _extract_fields(data.get("headerData", {}).get("fields", []))
+
+        client.image.attributes_update(
+            header_id=record_id,
+            fields=fields if fields else None,
+        )
+
+        db.mark_image_clean(record_id)
+        msg = f"Image {row.get('header_number', record_id)} pushed to BeProduct successfully"
+        logger.info(msg)
+        return True, msg
+
+    except Exception as e:
+        msg = f"Failed to push image {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+# ---------------------------------------------------------------------------
+# Block push-back
+# ---------------------------------------------------------------------------
+
+def push_block(record_id: str) -> tuple[bool, str]:
+    """Push a locally-modified block to BeProduct."""
+    row = db.get_block(record_id)
+    if not row:
+        return False, f"Block {record_id} not found in local DB"
+    if not row.get("is_dirty"):
+        return True, "No local changes to push"
+
+    try:
+        data = json.loads(row["data_json"])
+        client = get_client()
+
+        fields = _extract_fields(data.get("headerData", {}).get("fields", []))
+
+        client.block.attributes_update(
+            header_id=record_id,
+            fields=fields if fields else None,
+        )
+
+        db.mark_block_clean(record_id)
+        msg = f"Block {row.get('header_number', record_id)} pushed to BeProduct successfully"
+        logger.info(msg)
+        return True, msg
+
+    except Exception as e:
+        msg = f"Failed to push block {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+# ---------------------------------------------------------------------------
 # Directory push-back
 # ---------------------------------------------------------------------------
 
 def push_directory(record_id: str) -> tuple[bool, str]:
     """
     Directory records can be created/updated.
-    Note: 'adding and removing directory records is not supported' by the API,
-    but we can add contacts and update via directory_add() for new records.
+    Note: fax, active, and contacts are no longer part of the API schema and are omitted.
     """
     row = db.get_directory_record(record_id)
     if not row:
@@ -157,6 +226,7 @@ def push_directory(record_id: str) -> tuple[bool, str]:
         client = get_client()
 
         # Build the fields dict for directory_add (upsert-style)
+        # Remove: fax, active, contacts (not supported by current API)
         fields = {
             "directoryId": data.get("directoryId", ""),
             "name": data.get("name", ""),
@@ -168,9 +238,6 @@ def push_directory(record_id: str) -> tuple[bool, str]:
             "phone": data.get("phone", ""),
             "partnerType": data.get("partnerType", "VENDOR"),
             "website": data.get("website", ""),
-            "fax": data.get("fax", ""),
-            "active": data.get("active", True),
-            "contacts": data.get("contacts", []),
         }
 
         client.directory.directory_add(fields=fields)

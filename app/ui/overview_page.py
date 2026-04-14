@@ -26,14 +26,19 @@ def render_overview_page() -> None:
     st.subheader("📊 Local Database Summary")
     try:
         counts = db.get_row_counts()
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
         col1.metric("Styles", counts.get("styles", 0),
                     delta=f"{counts.get('styles_dirty', 0)} pending" if counts.get("styles_dirty") else None)
         col2.metric("Materials", counts.get("materials", 0),
                     delta=f"{counts.get('materials_dirty', 0)} pending" if counts.get("materials_dirty") else None)
         col3.metric("Colors", counts.get("colors", 0),
                     delta=f"{counts.get('colors_dirty', 0)} pending" if counts.get("colors_dirty") else None)
-        col4.metric("Directory", counts.get("directory", 0))
+        col4.metric("Images", counts.get("images", 0),
+                    delta=f"{counts.get('images_dirty', 0)} pending" if counts.get("images_dirty") else None)
+        col5.metric("Blocks", counts.get("blocks", 0),
+                    delta=f"{counts.get('blocks_dirty', 0)} pending" if counts.get("blocks_dirty") else None)
+        col6.metric("Directory", counts.get("directory", 0))
+        col7.metric("Users", counts.get("users", 0))
     except Exception as e:
         st.warning(f"Database not yet initialised: {e}")
         st.info("Use **⬇ Full Sync** in the sidebar to download your BeProduct data.")
@@ -42,7 +47,7 @@ def render_overview_page() -> None:
     # ── Sync status ───────────────────────────────────────────────────────
     st.divider()
     st.subheader("🔄 Sync Status")
-    entities = ["styles", "materials", "colors", "directory"]
+    entities = ["styles", "materials", "colors", "directory", "images", "blocks", "users"]
     any_synced = False
 
     cols = st.columns(len(entities))
@@ -74,6 +79,8 @@ def render_overview_page() -> None:
         counts.get("styles_dirty", 0)
         + counts.get("materials_dirty", 0)
         + counts.get("colors_dirty", 0)
+        + counts.get("images_dirty", 0)
+        + counts.get("blocks_dirty", 0)
     )
     if total_dirty > 0:
         st.divider()

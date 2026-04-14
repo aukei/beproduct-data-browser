@@ -11,6 +11,7 @@ schema migration is needed when BeProduct adds custom fields to your tenant.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Any, Generator, Iterator, Optional
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +105,56 @@ CREATE INDEX IF NOT EXISTS idx_colors_folder   ON colors(folder_id);
 CREATE INDEX IF NOT EXISTS idx_colors_modified ON colors(modified_at);
 CREATE INDEX IF NOT EXISTS idx_colors_dirty    ON colors(is_dirty);
 
+CREATE TABLE IF NOT EXISTS images (
+    id            TEXT PRIMARY KEY,
+    folder_id     TEXT,
+    folder_name   TEXT,
+    header_number TEXT,
+    header_name   TEXT,
+    active        INTEGER,
+    created_at    TEXT,
+    modified_at   TEXT,
+    synced_at     TEXT,
+    is_dirty      INTEGER DEFAULT 0,
+    data_json     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_images_folder    ON images(folder_id);
+CREATE INDEX IF NOT EXISTS idx_images_modified  ON images(modified_at);
+CREATE INDEX IF NOT EXISTS idx_images_dirty     ON images(is_dirty);
+
+CREATE TABLE IF NOT EXISTS blocks (
+    id            TEXT PRIMARY KEY,
+    folder_id     TEXT,
+    folder_name   TEXT,
+    header_number TEXT,
+    header_name   TEXT,
+    active        INTEGER,
+    created_at    TEXT,
+    modified_at   TEXT,
+    synced_at     TEXT,
+    is_dirty      INTEGER DEFAULT 0,
+    data_json     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_blocks_folder    ON blocks(folder_id);
+CREATE INDEX IF NOT EXISTS idx_blocks_modified  ON blocks(modified_at);
+CREATE INDEX IF NOT EXISTS idx_blocks_dirty     ON blocks(is_dirty);
+
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    email         TEXT,
+    username      TEXT,
+    first_name    TEXT,
+    last_name     TEXT,
+    title         TEXT,
+    account_type  TEXT,
+    role          TEXT,
+    registered_on TEXT,
+    active        INTEGER,
+    synced_at     TEXT,
+    data_json     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_users_active ON users(active);
+
 CREATE TABLE IF NOT EXISTS directory (
     id            TEXT PRIMARY KEY,
     directory_id  TEXT,
@@ -109,6 +162,7 @@ CREATE TABLE IF NOT EXISTS directory (
     partner_type  TEXT,
     country       TEXT,
     active        INTEGER,
+    modified_at   TEXT,
     synced_at     TEXT,
     is_dirty      INTEGER DEFAULT 0,
     data_json     TEXT NOT NULL
@@ -134,9 +188,15 @@ CREATE TABLE IF NOT EXISTS rate_limit_log (
 
 
 def init_schema() -> None:
-    """Create tables and indexes if they don't exist yet."""
+    """Create tables and indexes if they don't exist yet. Run migrations."""
     with get_conn() as conn:
         conn.executescript(_DDL)
+        
+        # Migration: add modified_at column to directory if it doesn't exist
+        try:
+            conn.execute("ALTER TABLE directory ADD COLUMN modified_at TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +209,19 @@ def _now_iso() -> str:
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return dict(row)
+
+
+def _extract_active_from_fields(record: dict[str, Any]) -> int:
+    """Extract active status from headerData.fields array.
+    
+    Returns 1 if active field is truthy, 0 otherwise.
+    """
+    fields = record.get("headerData", {}).get("fields", [])
+    for f in fields:
+        if f.get("id") == "active":
+            val = f.get("value", "")
+            return 1 if str(val).lower() in ("yes", "true", "1") else 0
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +248,8 @@ def upsert_style(record: dict[str, Any]) -> None:
                 return  # keep local pending changes
 
         folder = record.get("folder") or {}
+        active = _extract_active_from_fields(record)
+        
         conn.execute(
             """
             INSERT INTO styles
@@ -199,7 +274,7 @@ def upsert_style(record: dict[str, Any]) -> None:
                 folder.get("name"),
                 record.get("headerNumber"),
                 record.get("headerName"),
-                1 if str(record.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                active,
                 record.get("createdAt"),
                 record.get("modifiedAt"),
                 synced_at,
@@ -243,6 +318,8 @@ def update_style_local(record_id: str, updated_json: dict[str, Any]) -> None:
     """Mark a style as dirty and update its local JSON."""
     data_json = json.dumps(updated_json)
     folder = updated_json.get("folder") or {}
+    active = _extract_active_from_fields(updated_json)
+    
     with get_conn() as conn:
         conn.execute(
             """UPDATE styles SET
@@ -250,7 +327,7 @@ def update_style_local(record_id: str, updated_json: dict[str, Any]) -> None:
                WHERE id=?""",
             (
                 updated_json.get("headerName"),
-                1 if str(updated_json.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                active,
                 data_json,
                 record_id,
             ),
@@ -282,6 +359,8 @@ def upsert_material(record: dict[str, Any]) -> None:
                 return
 
         folder = record.get("folder") or {}
+        active = _extract_active_from_fields(record)
+        
         conn.execute(
             """
             INSERT INTO materials
@@ -306,7 +385,7 @@ def upsert_material(record: dict[str, Any]) -> None:
                 folder.get("name"),
                 record.get("headerNumber"),
                 record.get("headerName"),
-                1 if str(record.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                active,
                 record.get("createdAt"),
                 record.get("modifiedAt"),
                 synced_at,
@@ -347,6 +426,8 @@ def get_material(record_id: str) -> Optional[dict[str, Any]]:
 
 def update_material_local(record_id: str, updated_json: dict[str, Any]) -> None:
     data_json = json.dumps(updated_json)
+    active = _extract_active_from_fields(updated_json)
+    
     with get_conn() as conn:
         conn.execute(
             """UPDATE materials SET
@@ -354,7 +435,7 @@ def update_material_local(record_id: str, updated_json: dict[str, Any]) -> None:
                WHERE id=?""",
             (
                 updated_json.get("headerName"),
-                1 if str(updated_json.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                active,
                 data_json,
                 record_id,
             ),
@@ -386,6 +467,9 @@ def upsert_color(record: dict[str, Any]) -> None:
                 return
 
         folder = record.get("folder") or {}
+        active = _extract_active_from_fields(record)
+        
+        # Color palette field names changed: colorPaletteNumber, colorPaletteName
         conn.execute(
             """
             INSERT INTO colors
@@ -408,9 +492,9 @@ def upsert_color(record: dict[str, Any]) -> None:
                 record.get("id"),
                 folder.get("id"),
                 folder.get("name"),
-                record.get("headerNumber"),
-                record.get("headerName"),
-                1 if str(record.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                record.get("colorPaletteNumber") or record.get("headerNumber"),
+                record.get("colorPaletteName") or record.get("headerName"),
+                active,
                 record.get("createdAt"),
                 record.get("modifiedAt"),
                 synced_at,
@@ -451,14 +535,16 @@ def get_color(record_id: str) -> Optional[dict[str, Any]]:
 
 def update_color_local(record_id: str, updated_json: dict[str, Any]) -> None:
     data_json = json.dumps(updated_json)
+    active = _extract_active_from_fields(updated_json)
+    
     with get_conn() as conn:
         conn.execute(
             """UPDATE colors SET
                 header_name=?, active=?, data_json=?, is_dirty=1
                WHERE id=?""",
             (
-                updated_json.get("headerName"),
-                1 if str(updated_json.get("active", "false")).lower() in ("true", "1", "yes") else 0,
+                updated_json.get("colorPaletteName") or updated_json.get("headerName"),
+                active,
                 data_json,
                 record_id,
             ),
@@ -468,6 +554,297 @@ def update_color_local(record_id: str, updated_json: dict[str, Any]) -> None:
 def mark_color_clean(record_id: str) -> None:
     with get_conn() as conn:
         conn.execute("UPDATE colors SET is_dirty=0 WHERE id=?", (record_id,))
+
+
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+
+def upsert_image(record: dict[str, Any]) -> None:
+    """Insert or update an image record."""
+    synced_at = _now_iso()
+    data_json = json.dumps(record)
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT is_dirty, modified_at FROM images WHERE id=?", (record["id"],)
+        ).fetchone()
+
+        if existing and existing["is_dirty"] == 1:
+            remote_modified = record.get("modifiedAt", "")
+            local_modified = existing["modified_at"] or ""
+            if remote_modified <= local_modified:
+                return
+
+        folder = record.get("folder") or {}
+        active = _extract_active_from_fields(record)
+        
+        conn.execute(
+            """
+            INSERT INTO images
+                (id, folder_id, folder_name, header_number, header_name,
+                 active, created_at, modified_at, synced_at, is_dirty, data_json)
+            VALUES (?,?,?,?,?,?,?,?,?,0,?)
+            ON CONFLICT(id) DO UPDATE SET
+                folder_id=excluded.folder_id,
+                folder_name=excluded.folder_name,
+                header_number=excluded.header_number,
+                header_name=excluded.header_name,
+                active=excluded.active,
+                created_at=excluded.created_at,
+                modified_at=excluded.modified_at,
+                synced_at=excluded.synced_at,
+                is_dirty=0,
+                data_json=excluded.data_json
+            """,
+            (
+                record.get("id"),
+                folder.get("id"),
+                folder.get("name"),
+                record.get("headerNumber"),
+                record.get("headerName"),
+                active,
+                record.get("createdAt"),
+                record.get("modifiedAt"),
+                synced_at,
+                data_json,
+            ),
+        )
+
+
+def get_images(
+    folder_id: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 500,
+    dirty_only: bool = False,
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM images WHERE 1=1"
+    params: list[Any] = []
+    if folder_id:
+        sql += " AND folder_id=?"
+        params.append(folder_id)
+    if search:
+        sql += " AND (header_number LIKE ? OR header_name LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    if dirty_only:
+        sql += " AND is_dirty=1"
+    sql += " ORDER BY header_number LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_image(record_id: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM images WHERE id=?", (record_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def update_image_local(record_id: str, updated_json: dict[str, Any]) -> None:
+    data_json = json.dumps(updated_json)
+    active = _extract_active_from_fields(updated_json)
+    
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE images SET
+                header_name=?, active=?, data_json=?, is_dirty=1
+               WHERE id=?""",
+            (
+                updated_json.get("headerName"),
+                active,
+                data_json,
+                record_id,
+            ),
+        )
+
+
+def mark_image_clean(record_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE images SET is_dirty=0 WHERE id=?", (record_id,))
+
+
+# ---------------------------------------------------------------------------
+# Blocks
+# ---------------------------------------------------------------------------
+
+def upsert_block(record: dict[str, Any]) -> None:
+    """Insert or update a block record."""
+    synced_at = _now_iso()
+    data_json = json.dumps(record)
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT is_dirty, modified_at FROM blocks WHERE id=?", (record["id"],)
+        ).fetchone()
+
+        if existing and existing["is_dirty"] == 1:
+            remote_modified = record.get("modifiedAt", "")
+            local_modified = existing["modified_at"] or ""
+            if remote_modified <= local_modified:
+                return
+
+        folder = record.get("folder") or {}
+        active = _extract_active_from_fields(record)
+        
+        conn.execute(
+            """
+            INSERT INTO blocks
+                (id, folder_id, folder_name, header_number, header_name,
+                 active, created_at, modified_at, synced_at, is_dirty, data_json)
+            VALUES (?,?,?,?,?,?,?,?,?,0,?)
+            ON CONFLICT(id) DO UPDATE SET
+                folder_id=excluded.folder_id,
+                folder_name=excluded.folder_name,
+                header_number=excluded.header_number,
+                header_name=excluded.header_name,
+                active=excluded.active,
+                created_at=excluded.created_at,
+                modified_at=excluded.modified_at,
+                synced_at=excluded.synced_at,
+                is_dirty=0,
+                data_json=excluded.data_json
+            """,
+            (
+                record.get("id"),
+                folder.get("id"),
+                folder.get("name"),
+                record.get("headerNumber"),
+                record.get("headerName"),
+                active,
+                record.get("createdAt"),
+                record.get("modifiedAt"),
+                synced_at,
+                data_json,
+            ),
+        )
+
+
+def get_blocks(
+    folder_id: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 500,
+    dirty_only: bool = False,
+) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM blocks WHERE 1=1"
+    params: list[Any] = []
+    if folder_id:
+        sql += " AND folder_id=?"
+        params.append(folder_id)
+    if search:
+        sql += " AND (header_number LIKE ? OR header_name LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    if dirty_only:
+        sql += " AND is_dirty=1"
+    sql += " ORDER BY header_number LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_block(record_id: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM blocks WHERE id=?", (record_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def update_block_local(record_id: str, updated_json: dict[str, Any]) -> None:
+    data_json = json.dumps(updated_json)
+    active = _extract_active_from_fields(updated_json)
+    
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE blocks SET
+                header_name=?, active=?, data_json=?, is_dirty=1
+               WHERE id=?""",
+            (
+                updated_json.get("headerName"),
+                active,
+                data_json,
+                record_id,
+            ),
+        )
+
+
+def mark_block_clean(record_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE blocks SET is_dirty=0 WHERE id=?", (record_id,))
+
+
+# ---------------------------------------------------------------------------
+# Users (read-only metadata)
+# ---------------------------------------------------------------------------
+
+def upsert_user(record: dict[str, Any]) -> None:
+    """Insert or update a user record (read-only, no dirty tracking)."""
+    synced_at = _now_iso()
+    data_json = json.dumps(record)
+
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO users
+                (id, email, username, first_name, last_name, title,
+                 account_type, role, registered_on, active, synced_at, data_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                email=excluded.email,
+                username=excluded.username,
+                first_name=excluded.first_name,
+                last_name=excluded.last_name,
+                title=excluded.title,
+                account_type=excluded.account_type,
+                role=excluded.role,
+                registered_on=excluded.registered_on,
+                active=excluded.active,
+                synced_at=excluded.synced_at,
+                data_json=excluded.data_json
+            """,
+            (
+                record.get("id"),
+                record.get("email"),
+                record.get("username"),
+                record.get("firstName"),
+                record.get("lastName"),
+                record.get("title"),
+                record.get("accountType"),
+                record.get("role"),
+                record.get("registerdOn"),  # Note: typo in API field name
+                1 if record.get("active") else 0,
+                synced_at,
+                data_json,
+            ),
+        )
+
+
+def get_users(
+    search: Optional[str] = None,
+    active_only: bool = False,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Return users from local DB with optional filters."""
+    sql = "SELECT * FROM users WHERE 1=1"
+    params: list[Any] = []
+    if search:
+        sql += " AND (username LIKE ? OR email LIKE ? OR first_name LIKE ? OR last_name LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%", f"%{search}%", f"%{search}%"])
+    if active_only:
+        sql += " AND active=1"
+    sql += " ORDER BY username LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_user(user_id: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    return _row_to_dict(row) if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +881,7 @@ def upsert_directory_record(record: dict[str, Any]) -> bool:
                         partner_type=?,
                         country=?,
                         active=?,
+                        modified_at=?,
                         synced_at=?,
                         is_dirty=0,
                         data_json=?
@@ -515,6 +893,7 @@ def upsert_directory_record(record: dict[str, Any]) -> bool:
                         record.get("partnerType"),
                         record.get("country"),
                         1 if record.get("active", False) else 0,
+                        record.get("modifiedAt"),
                         synced_at,
                         data_json,
                         record.get("id"),
@@ -526,8 +905,8 @@ def upsert_directory_record(record: dict[str, Any]) -> bool:
             conn.execute(
                 """
                 INSERT INTO directory
-                    (id, directory_id, name, partner_type, country, active, synced_at, is_dirty, data_json)
-                VALUES (?,?,?,?,?,?,?,0,?)
+                    (id, directory_id, name, partner_type, country, active, modified_at, synced_at, is_dirty, data_json)
+                VALUES (?,?,?,?,?,?,?,?,0,?)
                 """,
                 (
                     record.get("id"),
@@ -536,6 +915,7 @@ def upsert_directory_record(record: dict[str, Any]) -> bool:
                     record.get("partnerType"),
                     record.get("country"),
                     1 if record.get("active", False) else 0,
+                    record.get("modifiedAt"),
                     synced_at,
                     data_json,
                 ),
@@ -599,11 +979,11 @@ def get_row_counts() -> dict[str, int]:
     """Return row counts for each entity table (for status display)."""
     with get_conn() as conn:
         counts: dict[str, int] = {}
-        for table in ("styles", "materials", "colors", "directory"):
+        for table in ("styles", "materials", "colors", "images", "blocks", "users", "directory"):
             row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()
             counts[table] = row["c"] if row else 0
         dirty: dict[str, int] = {}
-        for table in ("styles", "materials", "colors"):
+        for table in ("styles", "materials", "colors", "images", "blocks"):
             row = conn.execute(f"SELECT COUNT(*) as c FROM {table} WHERE is_dirty=1").fetchone()
             dirty[f"{table}_dirty"] = row["c"] if row else 0
     return {**counts, **dirty}

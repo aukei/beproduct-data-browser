@@ -29,6 +29,9 @@ _locks: dict[str, threading.Lock] = {
     "styles": threading.Lock(),
     "materials": threading.Lock(),
     "colors": threading.Lock(),
+    "images": threading.Lock(),
+    "blocks": threading.Lock(),
+    "users": threading.Lock(),
     "directory": threading.Lock(),
 }
 
@@ -192,6 +195,118 @@ def sync_colors(
 
 
 # ---------------------------------------------------------------------------
+# Images sync
+# ---------------------------------------------------------------------------
+
+def sync_images(
+    incremental: bool = False,
+    progress: ProgressCallback = _noop_progress,
+) -> tuple[bool, str]:
+    with _locks["images"]:
+        try:
+            client = get_client()
+            filters = []
+
+            if incremental:
+                meta = db.get_sync_meta("images")
+                if meta and meta.get("last_sync_at"):
+                    last = meta["last_sync_at"]
+                    filters.append(_any_modified_after_filter(last))
+                    logger.info(f"Images incremental sync since {last}")
+                else:
+                    incremental = False
+
+            count = 0
+            for image in client.image.attributes_list(filters=filters if filters else None):
+                db.upsert_image(image)
+                count += 1
+                if count % 50 == 0:
+                    progress("images", count)
+
+            db.set_sync_meta("images", sync_type="incremental" if incremental else "full")
+            msg = f"Synced {count} image(s)"
+            logger.info(msg)
+            progress("images", count)
+            return True, msg
+
+        except Exception as e:
+            msg = f"Image sync failed: {e}"
+            logger.error(f"{msg}\n{traceback.format_exc()}")
+            return False, msg
+
+
+# ---------------------------------------------------------------------------
+# Blocks sync
+# ---------------------------------------------------------------------------
+
+def sync_blocks(
+    incremental: bool = False,
+    progress: ProgressCallback = _noop_progress,
+) -> tuple[bool, str]:
+    with _locks["blocks"]:
+        try:
+            client = get_client()
+            filters = []
+
+            if incremental:
+                meta = db.get_sync_meta("blocks")
+                if meta and meta.get("last_sync_at"):
+                    last = meta["last_sync_at"]
+                    filters.append(_any_modified_after_filter(last))
+                    logger.info(f"Blocks incremental sync since {last}")
+                else:
+                    incremental = False
+
+            count = 0
+            for block in client.block.attributes_list(filters=filters if filters else None):
+                db.upsert_block(block)
+                count += 1
+                if count % 50 == 0:
+                    progress("blocks", count)
+
+            db.set_sync_meta("blocks", sync_type="incremental" if incremental else "full")
+            msg = f"Synced {count} block(s)"
+            logger.info(msg)
+            progress("blocks", count)
+            return True, msg
+
+        except Exception as e:
+            msg = f"Block sync failed: {e}"
+            logger.error(f"{msg}\n{traceback.format_exc()}")
+            return False, msg
+
+
+# ---------------------------------------------------------------------------
+# Users sync (read-only metadata)
+# ---------------------------------------------------------------------------
+
+def sync_users(
+    progress: ProgressCallback = _noop_progress,
+) -> tuple[bool, str]:
+    """Users are metadata only — always full sync, no incremental."""
+    with _locks["users"]:
+        try:
+            client = get_client()
+            count = 0
+            for user in client.user.user_list():
+                db.upsert_user(user)
+                count += 1
+                if count % 50 == 0:
+                    progress("users", count)
+
+            db.set_sync_meta("users", sync_type="full")
+            msg = f"Synced {count} user(s)"
+            logger.info(msg)
+            progress("users", count)
+            return True, msg
+
+        except Exception as e:
+            msg = f"User sync failed: {e}"
+            logger.error(f"{msg}\n{traceback.format_exc()}")
+            return False, msg
+
+
+# ---------------------------------------------------------------------------
 # Directory sync
 # ---------------------------------------------------------------------------
 
@@ -249,6 +364,9 @@ def sync_all(
     results["styles"] = sync_styles(incremental=incremental, progress=progress)
     results["materials"] = sync_materials(incremental=incremental, progress=progress)
     results["colors"] = sync_colors(incremental=incremental, progress=progress)
+    results["images"] = sync_images(incremental=incremental, progress=progress)
+    results["blocks"] = sync_blocks(incremental=incremental, progress=progress)
+    results["users"] = sync_users(progress=progress)
     results["directory"] = sync_directory(progress=progress)
 
     return results

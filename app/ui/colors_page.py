@@ -180,8 +180,9 @@ def _render_color_detail(record_id: str) -> None:
     if save_clicked:
         updated_data = dict(data)
         updated_data["headerData"] = {**header_data, "fields": edited_fields}
-        updated_data["headerName"] = next(
-            (f["value"] for f in edited_fields if f["id"] == "header_name"), data.get("headerName")
+        # Color palettes use colorPaletteName, not headerName
+        updated_data["colorPaletteName"] = next(
+            (f["value"] for f in edited_fields if f["id"] == "header_name"), data.get("colorPaletteName")
         )
         db.update_color_local(record_id, updated_data)
         st.success("Saved locally. Click **Push to BeProduct** to sync.")
@@ -197,7 +198,9 @@ def _render_color_detail(record_id: str) -> None:
         st.rerun()
 
     # Color swatches table
-    colors_list = data.get("colors", [])
+    # Colors are now nested at headerData.colors.colors (not at top level)
+    colors_wrapper = data.get("headerData", {}).get("colors") or {}
+    colors_list = colors_wrapper.get("colors", [])
     if colors_list:
         st.divider()
         st.subheader("🖌️ Colors in Palette")
@@ -205,8 +208,8 @@ def _render_color_detail(record_id: str) -> None:
         for c in colors_list:
             hex_val = c.get("hex", "")
             color_rows.append({
-                "Number": c.get("colorNumber", ""),
-                "Name": c.get("colorName", ""),
+                "Number": c.get("color_number", ""),
+                "Name": c.get("color_name", ""),
                 "Hex": f"#{hex_val}" if hex_val and not hex_val.startswith("#") else hex_val,
             })
         st.dataframe(

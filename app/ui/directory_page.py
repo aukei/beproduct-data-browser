@@ -44,7 +44,7 @@ def _render_directory_list() -> None:
     with col1:
         search = st.text_input("🔍 Search by name or ID", key="dir_search")
     with col2:
-        partner_types = ["All Types", "VENDOR", "FACTORY", "AGENT", "RETAILER", "OTHER"]
+        partner_types = ["All Types", "VENDOR", "FACTORY", "AGENT", "RETAILER", "SUPPLIER", "OTHER"]
         type_sel = st.selectbox("Partner Type", options=partner_types, key="dir_type_sel")
 
     partner_type = None if type_sel == "All Types" else type_sel
@@ -67,7 +67,6 @@ def _render_directory_list() -> None:
             "Name": r.get("name", ""),
             "Type": r.get("partner_type", ""),
             "Country": r.get("country", ""),
-            "Active": "✅" if r.get("active") else "❌",
             "Last Synced": (r.get("synced_at") or "")[:10],
         })
 
@@ -132,7 +131,8 @@ def _render_directory_detail(record_id: str) -> None:
 
     # Address / contact info
     st.subheader("📍 Address")
-    address_fields = ["address", "city", "state", "zip", "country", "phone", "fax", "website"]
+    # Note: fax is no longer returned by the API
+    address_fields = ["address", "city", "state", "zip", "country", "phone", "website"]
     addr_data = {k: data.get(k, "") for k in address_fields}
 
     col_a, col_b = st.columns(2)
@@ -144,7 +144,6 @@ def _render_directory_detail(record_id: str) -> None:
     with col_b:
         st.text_input("Country", value=addr_data.get("country", ""), disabled=True)
         st.text_input("Phone", value=addr_data.get("phone", ""), disabled=True)
-        st.text_input("Fax", value=addr_data.get("fax", ""), disabled=True)
         st.text_input("Website", value=addr_data.get("website", ""), disabled=True)
 
     # Contacts
