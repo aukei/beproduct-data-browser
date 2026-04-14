@@ -89,35 +89,38 @@ def _render_materials_list() -> None:
     df = pd.DataFrame(rows)
     st.caption(f"Showing {len(df)} record(s)")
 
-    event = st.dataframe(
-        df.drop(columns=["ID"]),
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-    )
+    # Split layout: left = table, right = JSON detail panel
+    col_left, col_right = st.columns([2, 1], gap="large")
 
-    if event and event.selection and event.selection.rows:
-        row_idx = event.selection.rows[0]
-        mat_id = df.iloc[row_idx]["ID"]
-        st.session_state["material_selected_id"] = mat_id
-        st.rerun()
+    # LEFT: Data grid with selection
+    with col_left:
+        event = st.dataframe(
+            df.drop(columns=["ID"]),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
 
-    # Raw JSON buttons - displayed as a compact grid below table
-    st.divider()
-    st.subheader("📄 Raw JSON")
-    cols_per_row = min(8, len(materials))
-    if cols_per_row > 0:
-        for i in range(0, len(materials), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(materials):
-                    m = materials[i + j]
-                    mat_id = m["id"]
-                    short_label = m.get('header_number', mat_id[:8])
-                    with col:
-                        if st.button(f"📄 {short_label}", key=f"raw_{mat_id}", help=f"View raw JSON"):
-                            raw_json_dialog(m.get("data_json") or m)
+        # Handle row selection
+        selected_row_idx: Optional[int] = None
+        if event and event.selection and event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            st.session_state["materials_selected_row_idx"] = selected_row_idx
+
+    # RIGHT: JSON detail panel
+    with col_right:
+        selected_row_idx = st.session_state.get("materials_selected_row_idx")
+        if selected_row_idx is not None and selected_row_idx < len(materials):
+            selected_material = materials[selected_row_idx]
+            mat_label = f"{selected_material.get('header_number', '')} — {selected_material.get('header_name', '')}"
+            with st.expander(f"📄 {mat_label}", expanded=True):
+                raw_data = selected_material.get("data_json")
+                if isinstance(raw_data, str):
+                    raw_data = json.loads(raw_data)
+                st.json(raw_data or selected_material)
+        else:
+            st.info("👈 Click a row to view raw JSON")
 
 
 def _render_material_detail(record_id: str) -> None:

@@ -74,35 +74,38 @@ def _render_directory_list() -> None:
     df = pd.DataFrame(rows)
     st.caption(f"Showing {len(df)} record(s)")
 
-    event = st.dataframe(
-        df.drop(columns=["ID"]),
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-    )
+    # Split layout: left = table, right = JSON detail panel
+    col_left, col_right = st.columns([2, 1], gap="large")
 
-    if event and event.selection and event.selection.rows:
-        row_idx = event.selection.rows[0]
-        rec_id = df.iloc[row_idx]["ID"]
-        st.session_state["directory_selected_id"] = rec_id
-        st.rerun()
+    # LEFT: Data grid with selection
+    with col_left:
+        event = st.dataframe(
+            df.drop(columns=["ID"]),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
 
-    # Raw JSON buttons - displayed as a compact grid below table
-    st.divider()
-    st.subheader("📄 Raw JSON")
-    cols_per_row = min(8, len(records))
-    if cols_per_row > 0:
-        for i in range(0, len(records), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(records):
-                    r = records[i + j]
-                    rec_id = r["id"]
-                    short_label = r.get('directory_id', rec_id[:8])
-                    with col:
-                        if st.button(f"📄 {short_label}", key=f"raw_{rec_id}", help=f"View raw JSON"):
-                            raw_json_dialog(r.get("data_json") or r)
+        # Handle row selection
+        selected_row_idx: Optional[int] = None
+        if event and event.selection and event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            st.session_state["directory_selected_row_idx"] = selected_row_idx
+
+    # RIGHT: JSON detail panel
+    with col_right:
+        selected_row_idx = st.session_state.get("directory_selected_row_idx")
+        if selected_row_idx is not None and selected_row_idx < len(records):
+            selected_record = records[selected_row_idx]
+            rec_label = f"{selected_record.get('directory_id', '')} — {selected_record.get('name', '')}"
+            with st.expander(f"📄 {rec_label}", expanded=True):
+                raw_data = selected_record.get("data_json")
+                if isinstance(raw_data, str):
+                    raw_data = json.loads(raw_data)
+                st.json(raw_data or selected_record)
+        else:
+            st.info("👈 Click a row to view raw JSON")
 
 
 def _render_directory_detail(record_id: str) -> None:

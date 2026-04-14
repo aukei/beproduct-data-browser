@@ -100,37 +100,38 @@ def _render_styles_list() -> None:
     df = pd.DataFrame(rows)
     st.caption(f"Showing {len(df)} record(s)")
 
-    # Display table with click-to-select
-    event = st.dataframe(
-        df.drop(columns=["ID"]),
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-    )
+    # Split layout: left = table, right = JSON detail panel
+    col_left, col_right = st.columns([2, 1], gap="large")
 
-    # Handle row selection for detail view
-    if event and event.selection and event.selection.rows:
-        row_idx = event.selection.rows[0]
-        style_id = df.iloc[row_idx]["ID"]
-        st.session_state["style_selected_id"] = style_id
-        st.rerun()
+    # LEFT: Data grid with selection
+    with col_left:
+        event = st.dataframe(
+            df.drop(columns=["ID"]),
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+        )
 
-    # Raw JSON buttons - displayed as a compact grid below table
-    st.divider()
-    st.subheader("📄 Raw JSON")
-    cols_per_row = min(8, len(styles))
-    if cols_per_row > 0:
-        for i in range(0, len(styles), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(styles):
-                    s = styles[i + j]
-                    style_id = s["id"]
-                    short_label = s.get('header_number', style_id[:8])
-                    with col:
-                        if st.button(f"📄 {short_label}", key=f"raw_{style_id}", help=f"View raw JSON"):
-                            raw_json_dialog(s.get("data_json") or s)
+        # Handle row selection
+        selected_row_idx: Optional[int] = None
+        if event and event.selection and event.selection.rows:
+            selected_row_idx = event.selection.rows[0]
+            st.session_state["styles_selected_row_idx"] = selected_row_idx
+
+    # RIGHT: JSON detail panel
+    with col_right:
+        selected_row_idx = st.session_state.get("styles_selected_row_idx")
+        if selected_row_idx is not None and selected_row_idx < len(styles):
+            selected_style = styles[selected_row_idx]
+            style_label = f"{selected_style.get('header_number', '')} — {selected_style.get('header_name', '')}"
+            with st.expander(f"📄 {style_label}", expanded=True):
+                raw_data = selected_style.get("data_json")
+                if isinstance(raw_data, str):
+                    raw_data = json.loads(raw_data)
+                st.json(raw_data or selected_style)
+        else:
+            st.info("👈 Click a row to view raw JSON")
 
 
 def _render_style_detail(record_id: str) -> None:
