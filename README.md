@@ -75,6 +75,135 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ---
 
+## Export to Databricks
+
+The `scripts/upload_to_databricks.py` script uploads all 6 models (Styles, Materials, Colors, Images, Blocks, Directory) from your local SQLite database to Azure Databricks Delta tables.
+
+### Prerequisites
+
+1. Install the Databricks SQL connector:
+   ```bash
+   pip install -r requirements-scripts.txt
+   ```
+
+2. Add Databricks credentials to `.env`:
+   ```env
+   DATABRICKS_HOST=https://adb-xxxxxxxx.azuredatabricks.net
+   DATABRICKS_PAT=dapi...
+   DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/<id>
+   ```
+
+   - **DATABRICKS_HOST**: Your workspace URL
+   - **DATABRICKS_PAT**: Personal Access Token (generate in Databricks workspace → User Settings → Access Tokens)
+   - **DATABRICKS_HTTP_PATH**: SQL Warehouse HTTP path (from Databricks → SQL Warehouses → Connection details)
+
+### Usage
+
+```bash
+python scripts/upload_to_databricks.py
+```
+
+The script is **fully interactive**:
+
+1. **Shows counts**: Displays how many records exist locally for each of the 6 models
+2. **Asks for destination**: Prompts for catalog, schema, and a table **prefix**
+   - Tables will be created as: `{prefix}_styles`, `{prefix}_materials`, `{prefix}_colors`, `{prefix}_images`, `{prefix}_blocks`, `{prefix}_directory`
+3. **Checks privileges**: Verifies access to the catalog/schema and checks if target tables already exist
+4. **Asks for conflict mode** (if tables exist): 
+   - `[O]`verwrite — drops and recreates all tables
+   - `[A]`ppend — adds rows to existing tables
+   - `[C]`ancel — aborts
+5. **Uploads data**: Transfers rows in batches of 500, with progress bar per model
+6. **Summary table**: Shows rows uploaded/failed per model + total duration
+
+### Table Schema
+
+Each table contains:
+- **Common fields**: `id`, `folder_id`, `folder_name`, `header_number`, `header_name`, `active`, `created_at`, `modified_at`, `synced_at`, `is_dirty`
+- **Full JSON**: `data_json` (STRING) — complete API response, suitable for unpacking nested data in downstream analytics
+
+### Example
+
+```bash
+$ python scripts/upload_to_databricks.py
+
+════════════════════════════════════════════════════
+  BeProduct  →  Databricks Upload Helper
+  (Bulk: Styles, Materials, Colors, Images, Blocks, Directory)
+════════════════════════════════════════════════════
+
+✅ Connected as: user@company.com
+─  Current catalog: hive_metastore
+
+Local record counts:
+  ✓  Styles               (1,234 records)
+  ✓  Materials            (  456 records)
+  ✓  Colors               (  789 records)
+  ✓  Images               (  321 records)
+  ✓  Blocks               (   98 records)
+  ✓  Directory            (   45 records)
+
+Destination (Unity Catalog):
+  Catalog: main
+  Schema: beproduct
+  Table prefix: bp
+
+Target catalog : main
+Target schema  : beproduct
+Table prefix   : bp_<model>
+
+── Privilege Check (Bulk Upload) ──────────────────
+  ✅ Catalog 'main' is accessible
+  ✅ Schema 'main.beproduct' is accessible
+
+  ─  styles       `main`.`beproduct`.`bp_styles` (will be created)
+  ─  materials    `main`.`beproduct`.`bp_materials` (will be created)
+  ─  colors       `main`.`beproduct`.`bp_colors` (will be created)
+  ─  images       `main`.`beproduct`.`bp_images` (will be created)
+  ─  blocks       `main`.`beproduct`.`bp_blocks` (will be created)
+  ─  directory    `main`.`beproduct`.`bp_directory` (will be created)
+
+  ─  Write access will be verified at transfer start.
+     Required privileges: CREATE TABLE, MODIFY (on the schema)
+
+── Schema / Table Setup ──────────────────────────
+  Creating schema main.beproduct…
+  ✅ Schema created: main.beproduct
+
+── Data Transfer ─────────────────────────────────
+
+  Styles:
+    Loaded 1,234 rows (11 columns)
+    ✅ Table created
+    Uploading in batches of 500…
+    ✅ 1,234 rows uploaded
+
+  Materials:
+    Loaded 456 rows (11 columns)
+    ✅ Table created
+    Uploading in batches of 500…
+    ✅ 456 rows uploaded
+
+  [... more models ...]
+
+── Summary ───────────────────────────────────────
+  Model         Table                 Uploaded  Failed
+  ──────────────────────────────────────────────────
+  Styles        `main`.`beproduct`.`bp_styles`       1,234      ✓
+  Materials     `main`.`beproduct`.`bp_materials`      456      ✓
+  Colors        `main`.`beproduct`.`bp_colors`         789      ✓
+  Images        `main`.`beproduct`.`bp_images`         321      ✓
+  Blocks        `main`.`beproduct`.`bp_blocks`          98      ✓
+  Directory     `main`.`beproduct`.`bp_directory`       45      ✓
+  ──────────────────────────────────────────────────
+  Total                                         2,943      ✓
+  Duration: 42.3 seconds
+
+  ✅ All uploads completed successfully!
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -94,13 +223,15 @@ beproduct-data-browser/
 │       ├── colors_page.py      # Color palette list + detail + edit
 │       └── directory_page.py   # Directory list + detail
 ├── scripts/
-│   └── get_refresh_token.py    # One-time OAuth token bootstrap helper
+│   ├── get_refresh_token.py          # One-time OAuth token bootstrap helper
+│   └── upload_to_databricks.py       # Bulk export: all 6 models to Databricks Delta
 ├── plans/
 │   └── beproduct-data-browser-plan.md
 ├── data/                       # SQLite database lives here (gitignored)
 ├── .env.example
 ├── .gitignore
-├── requirements.txt
+├── requirements.txt            # App dependencies
+├── requirements-scripts.txt    # Helper script dependencies (Databricks)
 └── README.md
 ```
 

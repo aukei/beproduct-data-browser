@@ -63,15 +63,14 @@ BOLD = lambda t: _c("1",    t)   # bold
 # MODEL METADATA
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Maps menu index → (display_name, sqlite_table_name)
-MODELS: list[tuple[str, str]] = [
+# Models to upload in bulk
+BULK_MODELS: list[tuple[str, str]] = [
     ("Styles",    "styles"),
     ("Materials", "materials"),
     ("Colors",    "colors"),
     ("Images",    "images"),
     ("Blocks",    "blocks"),
     ("Directory", "directory"),
-    ("Users",     "users"),
 ]
 
 # DDL for each entity.  SQLite TEXT → STRING, SQLite INTEGER → BIGINT.
@@ -307,26 +306,17 @@ def _prompt_choice(question: str, choices: list[str]) -> str:
         print(f"  Please enter one of: {', '.join(choices)}")
 
 
-def _select_model(counts: dict[str, int]) -> tuple[str, str]:
-    """Display model menu and return (display_name, sqlite_table_name)."""
+def _get_destination_bulk() -> tuple[str, str, str]:
+    """Prompt for catalog, schema, and table prefix. Returns (catalog, schema, prefix)."""
     print()
-    print(BOLD("Select model to upload:"))
-    for i, (name, table) in enumerate(MODELS, 1):
-        count = counts.get(table, 0)
-        count_str = f"{count:>6,}" if count else "    --"
-        marker = OK("✓") if count > 0 else WARN("·")
-        print(f"  {marker}  {i}.  {name:<12}  ({count_str} records locally)")
-
-    print()
-    while True:
-        raw = _prompt(f"Enter model number [1-{len(MODELS)}]")
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(MODELS):
-                return MODELS[idx - 1]
-        except ValueError:
-            pass
-        print(f"  Please enter a number between 1 and {len(MODELS)}.")
+    print(BOLD("Destination (Unity Catalog):"))
+    catalog = _validate_identifier(_prompt("  Catalog", "main"), "Catalog")
+    schema  = _validate_identifier(_prompt("  Schema"), "Schema")
+    prefix  = _validate_identifier(
+        _prompt("  Table prefix (tables will be prefix_styles, prefix_materials, …)"),
+        "Table prefix"
+    )
+    return catalog, schema, prefix
 
 
 _VALID_NAME = re.compile(r"^[a-z_][a-z0-9_.]*$")
@@ -345,14 +335,7 @@ def _validate_identifier(name: str, what: str) -> str:
     return name
 
 
-def _get_destination() -> tuple[str, str, str]:
-    """Prompt for catalog, schema, table and return validated identifiers."""
-    print()
-    print(BOLD("Destination (Unity Catalog):"))
-    catalog = _validate_identifier(_prompt("  Catalog", "main"), "Catalog")
-    schema  = _validate_identifier(_prompt("  Schema"), "Schema")
-    table   = _validate_identifier(_prompt("  Table"), "Table")
-    return catalog, schema, table
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -452,6 +435,117 @@ def _check_privileges(
     # 4. Advisory note about write privileges
     print(INFO(
         "  ─  Write access will be verified at transfer start.\n"
+        "     Required privileges: CREATE TABLE, MODIFY (on the schema)"
+    ))
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHECK ALL TABLES (for bulk upload)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _check_all_tables(
+    cursor, catalog: str, schema: str, prefix: str, entities: list[str]
+) -> dict[str, Any]:
+    """
+    Check access and existence for all target tables (bulk upload mode).
+    
+    Returns a dict with keys:
+        catalog_ok      bool
+        schema_ok       bool   (False = schema doesn't exist yet)
+        tables          dict[entity_name -> {exists: bool, row_count: int, full_name: str}]
+        any_exist       bool   (True if at least one target table already exists)
+    """
+    result = {
+        "catalog_ok": False,
+        "schema_ok": False,
+        "tables": {},
+        "any_exist": False,
+    }
+
+    print()
+    print(BOLD("── Privilege Check (Bulk Upload) ────────────────────────────"))
+
+    # 1. Catalog visibility
+    try:
+        cursor.execute(f"SHOW CATALOGS LIKE '{catalog}'")
+        rows = cursor.fetchall()
+        if rows:
+            result["catalog_ok"] = True
+            print(OK(f"  ✅ Catalog '{catalog}' is accessible"))
+        else:
+            print(WARN(f"  ⚠  Catalog '{catalog}' not found — check the name or"
+                       " request USE CATALOG privilege"))
+            return result
+    except Exception as exc:
+        print(WARN(f"  ⚠  Could not list catalogs: {exc}"))
+        print("     Continuing — catalog check will be implicit during transfer.")
+        result["catalog_ok"] = True  # assume ok, real error surfaces later
+
+    # 2. Schema visibility
+    try:
+        cursor.execute(f"SHOW SCHEMAS IN `{catalog}` LIKE '{schema}'")
+        rows = cursor.fetchall()
+        if rows:
+            result["schema_ok"] = True
+            print(OK(f"  ✅ Schema '{catalog}.{schema}' is accessible"))
+        else:
+            result["schema_ok"] = False
+            print(WARN(f"  ⚠  Schema '{catalog}.{schema}' not found — will attempt"
+                       " to create it during upload"))
+    except Exception as exc:
+        print(WARN(f"  ⚠  Could not list schemas: {exc}"))
+        result["schema_ok"] = False
+
+    # 3. Check each target table
+    print()
+    for entity in entities:
+        table_name = f"{prefix}_{entity}"
+        full_name = f"`{catalog}`.`{schema}`.`{table_name}`"
+        
+        table_exists = False
+        row_count = 0
+        
+        try:
+            cursor.execute(
+                f"SELECT COUNT(*) FROM `{catalog}`.information_schema.tables "
+                f"WHERE table_schema = '{schema}' AND table_name = '{table_name}'"
+            )
+            row = cursor.fetchone()
+            table_found = (row and row[0] > 0) if row else False
+        except Exception:
+            # Fallback: SHOW TABLES
+            try:
+                cursor.execute(f"SHOW TABLES IN `{catalog}`.`{schema}` LIKE '{table_name}'")
+                rows = cursor.fetchall()
+                table_found = len(rows) > 0
+            except Exception:
+                table_found = False
+
+        if table_found:
+            table_exists = True
+            result["any_exist"] = True
+            try:
+                cursor.execute(f"SELECT COUNT(*) FROM {full_name}")
+                cnt_row = cursor.fetchone()
+                row_count = cnt_row[0] if cnt_row else 0
+                print(WARN(f"  ⚠  {entity:<12}  {full_name} ({row_count:,} rows)"))
+            except Exception as exc:
+                row_count = -1
+                print(WARN(f"  ⚠  {entity:<12}  {full_name} (row count unavailable: {str(exc)[:50]})"))
+        else:
+            print(INFO(f"  ─  {entity:<12}  {full_name} (will be created)"))
+
+        result["tables"][entity] = {
+            "exists": table_exists,
+            "row_count": row_count,
+            "full_name": full_name,
+        }
+
+    # 4. Advisory note about write privileges
+    print(INFO(
+        "\n  ─  Write access will be verified at transfer start.\n"
         "     Required privileges: CREATE TABLE, MODIFY (on the schema)"
     ))
 
@@ -571,6 +665,7 @@ def main() -> None:
     print()
     print(BOLD("═" * 54))
     print(BOLD("  BeProduct  →  Databricks Upload Helper"))
+    print(BOLD("  (Bulk: Styles, Materials, Colors, Images, Blocks, Directory)"))
     print(BOLD("═" * 54))
 
     # ── 2. Connect ───────────────────────────────────────────────────────────
@@ -583,26 +678,36 @@ def main() -> None:
     print(OK(f"  ✅ Connected as: {identity['user']}"))
     print(INFO(f"  ─  Current catalog: {identity['catalog']}"))
 
-    # ── 3. Select model ──────────────────────────────────────────────────────
+    # ── 3. Show local record counts ───────────────────────────────────────────
+    print()
+    print(BOLD("Local record counts:"))
     counts = _local_counts(cfg["_db_path"])
-    display_name, entity = _select_model(counts)
+    entities = [entity for _, entity in BULK_MODELS]
+    has_data = False
+    for display_name, entity in BULK_MODELS:
+        count = counts.get(entity, 0)
+        count_str = f"{count:>6,}" if count else "    --"
+        marker = OK("✓") if count > 0 else WARN("·")
+        print(f"  {marker}  {display_name:<12}  ({count_str} records)")
+        if count > 0:
+            has_data = True
 
-    local_count = counts.get(entity, 0)
-    if local_count == 0:
-        print(WARN(f"\n⚠  Local table '{entity}' is empty — nothing to upload."))
+    if not has_data:
+        print(WARN("\n⚠  All local tables are empty — nothing to upload."))
         print("   Run the Streamlit app and perform a Full Sync first.")
         cursor.close()
         conn.close()
         sys.exit(0)
 
     # ── 4. Destination ───────────────────────────────────────────────────────
-    catalog, schema, table = _get_destination()
-    full_name = f"`{catalog}`.`{schema}`.`{table}`"
+    catalog, schema, prefix = _get_destination_bulk()
     print()
-    print(INFO(f"  Target: {catalog}.{schema}.{table}"))
+    print(INFO(f"  Target catalog : {catalog}"))
+    print(INFO(f"  Target schema  : {schema}"))
+    print(INFO(f"  Table prefix   : {prefix}_<model>"))
 
-    # ── 5. Privilege check ───────────────────────────────────────────────────
-    pcheck = _check_privileges(cursor, catalog, schema, table)
+    # ── 5. Privilege check (all 6 tables) ─────────────────────────────────────
+    pcheck = _check_all_tables(cursor, catalog, schema, prefix, entities)
 
     if not pcheck["catalog_ok"]:
         print(ERR(f"\n✗ Catalog '{catalog}' is not accessible. Aborting."))
@@ -610,22 +715,15 @@ def main() -> None:
         conn.close()
         sys.exit(1)
 
-    # ── 6. Existence check + overwrite/append decision ────────────────────────
+    # ── 6. Existence check + overwrite/append decision (if any tables exist) ───
     mode = "create"  # create | overwrite | append
-    if pcheck["table_exists"]:
+    if pcheck["any_exist"]:
         print()
-        row_info = (
-            f"({pcheck['row_count']:,} rows)" if pcheck["row_count"] >= 0
-            else "(row count unavailable)"
-        )
-        print(WARN(
-            f"⚠  Table {catalog}.{schema}.{table} already exists {row_info}."
-        ))
+        print(WARN("⚠  Some target tables already exist (see above)."))
         choice = _prompt_choice(
-            "\n  Action?",
+            "\n  Action for ALL tables?",
             ["O", "A", "C"],
         )
-        # Annotate choices
         print(f"     O = Overwrite (drop + recreate)   A = Append   C = Cancel")
         choice = choice.upper()
         if choice == "C":
@@ -637,30 +735,13 @@ def main() -> None:
             mode = "overwrite"
         else:
             mode = "append"
-    
-    # Re-prompt after annotation for clarity when choices aren't obvious
-    if pcheck["table_exists"]:
         print()
         if mode == "overwrite":
-            print(WARN("  Mode: Overwrite — existing table will be dropped and recreated."))
+            print(WARN("  Mode: Overwrite — existing tables will be dropped and recreated."))
         else:
-            print(INFO("  Mode: Append — rows will be added to the existing table."))
+            print(INFO("  Mode: Append — rows will be added to existing tables."))
 
-    # ── 7. Fetch local data ──────────────────────────────────────────────────
-    print()
-    print(INFO(f"  Fetching {local_count:,} rows from local '{entity}' table…"))
-    columns, rows = _get_local_records(cfg["_db_path"], entity)
-
-    if not rows:
-        print(WARN("  Local table is empty. Nothing to upload."))
-        cursor.close()
-        conn.close()
-        sys.exit(0)
-
-    actual_count = len(rows)
-    print(OK(f"  ✅ Loaded {actual_count:,} rows ({len(columns)} columns)"))
-
-    # ── 8. Create schema + table ─────────────────────────────────────────────
+    # ── 7. Create schema (once) ──────────────────────────────────────────────
     print()
     print(BOLD("── Schema / Table Setup ─────────────────────────────────"))
 
@@ -672,57 +753,122 @@ def main() -> None:
         except Exception as exc:
             _handle_db_error(f"Could not create schema '{catalog}.{schema}'", exc)
 
-    if mode == "overwrite":
-        print(WARN(f"  Dropping existing table {catalog}.{schema}.{table}…"))
-        try:
-            cursor.execute(f"DROP TABLE IF EXISTS {full_name}")
-            print(OK(f"  ✅ Table dropped"))
-        except Exception as exc:
-            _handle_db_error("Could not drop table", exc)
-
-    if mode in ("create", "overwrite"):
-        ddl = _build_ddl(catalog, schema, table, entity)
-        print(INFO(f"  Creating Delta table {catalog}.{schema}.{table}…"))
-        try:
-            cursor.execute(ddl)
-            print(OK(f"  ✅ Table created"))
-        except Exception as exc:
-            _handle_db_error("Could not create table", exc)
-    else:
-        # Append: keep the table as-is, but ensure DDL is compatible by trying CREATE IF NOT EXISTS
-        ddl = f"CREATE TABLE IF NOT EXISTS {full_name} (\n    {_ENTITY_COLUMNS[entity].strip()}\n) USING DELTA"
-        try:
-            cursor.execute(ddl)
-            print(OK(f"  ✅ Table schema verified"))
-        except Exception:
-            # Table exists from a prior non-delta create or schema mismatch — just proceed
-            print(WARN(f"  ⚠  Skipping DDL check on existing table (will append directly)"))
-
-    # ── 9. Upload ────────────────────────────────────────────────────────────
+    # ── 8. Data Transfer ─────────────────────────────────────────────────────
     print()
     print(BOLD("── Data Transfer ────────────────────────────────────────"))
-    print(INFO(f"  Uploading {actual_count:,} rows in batches of 500…"))
 
-    t_start = time.time()
-    uploaded, failed = _upload(cursor, catalog, schema, table, columns, rows)
-    elapsed = time.time() - t_start
+    summary_results: list[dict[str, Any]] = []
+    t_total_start = time.time()
 
-    # ── 10. Summary ──────────────────────────────────────────────────────────
+    for display_name, entity in BULK_MODELS:
+        table_name = f"{prefix}_{entity}"
+        full_name = f"`{catalog}`.`{schema}`.`{table_name}`"
+
+        # Fetch local data
+        local_count = counts.get(entity, 0)
+        if local_count == 0:
+            print(INFO(f"  {display_name:<12}  Skipping (no local data)"))
+            continue
+
+        print(f"\n  {display_name}:")
+        columns, rows = _get_local_records(cfg["_db_path"], entity)
+
+        if not rows:
+            print(INFO(f"    Skipping (table is empty)"))
+            continue
+
+        actual_count = len(rows)
+        print(INFO(f"    Loaded {actual_count:,} rows ({len(columns)} columns)"))
+
+        # Handle table existence + setup
+        tbl_info = pcheck["tables"].get(entity, {})
+        tbl_exists = tbl_info.get("exists", False)
+
+        if mode == "overwrite" and tbl_exists:
+            print(INFO(f"    Dropping existing table…"))
+            try:
+                cursor.execute(f"DROP TABLE IF EXISTS {full_name}")
+                print(OK(f"    ✅ Dropped"))
+            except Exception as exc:
+                print(WARN(f"    ⚠  Could not drop: {str(exc)[:80]}"))
+
+        if mode in ("create", "overwrite"):
+            ddl = _build_ddl(catalog, schema, table_name, entity)
+            try:
+                cursor.execute(ddl)
+                print(OK(f"    ✅ Table created"))
+            except Exception as exc:
+                print(WARN(f"    ⚠  Could not create table: {str(exc)[:80]}"))
+        elif mode == "append" and not tbl_exists:
+            # Table doesn't exist in append mode, so create it
+            ddl = _build_ddl(catalog, schema, table_name, entity)
+            try:
+                cursor.execute(ddl)
+                print(OK(f"    ✅ Table created"))
+            except Exception as exc:
+                print(WARN(f"    ⚠  Could not create table: {str(exc)[:80]}"))
+        else:
+            # Append mode + table exists: just verify schema
+            try:
+                cursor.execute(f"SELECT 1 FROM {full_name} LIMIT 1")
+                print(OK(f"    ✅ Table exists (appending)"))
+            except Exception:
+                pass
+
+        # Upload
+        print(INFO(f"    Uploading in batches of 500…"))
+        t_start = time.time()
+        uploaded, failed = _upload(cursor, catalog, schema, table_name, columns, rows)
+        elapsed = time.time() - t_start
+
+        summary_results.append({
+            "model": display_name,
+            "table": full_name,
+            "uploaded": uploaded,
+            "failed": failed,
+            "total": actual_count,
+            "duration": elapsed,
+        })
+
+        print(OK(f"    ✅ {uploaded:,} rows uploaded") if failed == 0 
+              else WARN(f"    ⚠  {uploaded:,} rows uploaded, {failed:,} failed"))
+
+    # ── 9. Summary ───────────────────────────────────────────────────────────
     print()
     print(BOLD("── Summary ──────────────────────────────────────────────"))
 
-    if failed == 0:
-        print(OK(f"  ✅ Upload complete"))
+    if summary_results:
+        # Calculate totals
+        total_uploaded = sum(r["uploaded"] for r in summary_results)
+        total_failed = sum(r["failed"] for r in summary_results)
+        total_duration = time.time() - t_total_start
+
+        # Print table
+        print()
+        print(f"  {'Model':<12}  {'Table':<40}  {'Uploaded':>10}  {'Failed':>8}")
+        print(f"  {'-' * 12}  {'-' * 40}  {'-' * 10}  {'-' * 8}")
+        for res in summary_results:
+            model_cell = res["model"][:12].ljust(12)
+            table_cell = res["table"][-40:].ljust(40)
+            uploaded_cell = f"{res['uploaded']:>10,}".rjust(10)
+            failed_cell = f"{res['failed']:>8,}".rjust(8) if res['failed'] > 0 else "✓".rjust(8)
+            print(f"  {model_cell}  {table_cell}  {uploaded_cell}  {failed_cell}")
+
+        print(f"  {'-' * 12}  {'-' * 40}  {'-' * 10}  {'-' * 8}")
+        total_uploaded_str = OK(str(total_uploaded))
+        total_failed_str = ERR(str(total_failed)) if total_failed > 0 else OK("0")
+        print(f"  {'Total':<12}  {'':<40}  {total_uploaded_str:>10}  {total_failed_str:>8}")
+        print(f"  Duration: {total_duration:.1f} seconds")
+        print()
+
+        if total_failed == 0:
+            print(OK("  ✅ All uploads completed successfully!"))
+        else:
+            print(WARN(f"  ⚠  Some rows failed (see details above)"))
     else:
-        print(WARN(f"  ⚠  Upload completed with errors"))
+        print(WARN("  No models were uploaded."))
 
-    print(f"  Table    : {catalog}.{schema}.{table}")
-    print(f"  Uploaded : {OK(str(uploaded))} / {actual_count} rows")
-    if failed > 0:
-        print(f"  Failed   : {ERR(str(failed))} rows  (see warnings above)")
-    print(f"  Duration : {elapsed:.1f} seconds")
     print()
-
     cursor.close()
     conn.close()
 
