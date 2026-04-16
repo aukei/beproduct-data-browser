@@ -233,7 +233,7 @@ def _local_counts(db_path: str) -> dict[str, int]:
         return counts
     try:
         conn = sqlite3.connect(db_path)
-        for _, table in MODELS:
+        for _, table in BULK_MODELS:
             try:
                 row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
                 counts[table] = row[0] if row else 0
