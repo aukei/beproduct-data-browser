@@ -264,6 +264,8 @@ def push_all_dirty() -> dict[str, list[tuple[str, bool, str]]]:
         "styles": [],
         "materials": [],
         "colors": [],
+        "images": [],
+        "blocks": [],
     }
 
     for row in db.get_styles(dirty_only=True):
@@ -277,6 +279,14 @@ def push_all_dirty() -> dict[str, list[tuple[str, bool, str]]]:
     for row in db.get_colors(dirty_only=True):
         ok, msg = push_color(row["id"])
         results["colors"].append((row["id"], ok, msg))
+
+    for row in db.get_images(dirty_only=True):
+        ok, msg = push_image(row["id"])
+        results["images"].append((row["id"], ok, msg))
+
+    for row in db.get_blocks(dirty_only=True):
+        ok, msg = push_block(row["id"])
+        results["blocks"].append((row["id"], ok, msg))
 
     return results
 

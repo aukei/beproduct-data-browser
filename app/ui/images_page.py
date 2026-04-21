@@ -114,6 +114,9 @@ def _render_images_list() -> None:
         if selected_row_idx is not None and selected_row_idx < len(images):
             selected_image = images[selected_row_idx]
             img_label = f"{selected_image.get('header_number', '')} — {selected_image.get('header_name', '')}"
+            if st.button("✏️ Edit / View Details", key="img_edit_btn", use_container_width=True, type="primary"):
+                st.session_state["image_selected_id"] = selected_image["id"]
+                st.rerun()
             with st.expander(f"📄 {img_label}", expanded=True):
                 raw_data = selected_image.get("data_json")
                 if isinstance(raw_data, str):
@@ -206,7 +209,7 @@ def _render_image_detail(record_id: str) -> None:
         st.subheader("🖼️ Preview")
         preview_url = preview_data.get("preview")
         if preview_url:
-            st.image(preview_url, use_column_width=True)
+            st.image(preview_url, use_container_width=True)
 
     # ── Raw JSON expander ────────────────────────────────────────────
     with st.expander("🔍 Raw JSON", expanded=False):

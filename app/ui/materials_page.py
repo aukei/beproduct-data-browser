@@ -114,6 +114,9 @@ def _render_materials_list() -> None:
         if selected_row_idx is not None and selected_row_idx < len(materials):
             selected_material = materials[selected_row_idx]
             mat_label = f"{selected_material.get('header_number', '')} — {selected_material.get('header_name', '')}"
+            if st.button("✏️ Edit / View Details", key="mat_edit_btn", use_container_width=True, type="primary"):
+                st.session_state["material_selected_id"] = selected_material["id"]
+                st.rerun()
             with st.expander(f"📄 {mat_label}", expanded=True):
                 raw_data = selected_material.get("data_json")
                 if isinstance(raw_data, str):

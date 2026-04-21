@@ -125,6 +125,9 @@ def _render_styles_list() -> None:
         if selected_row_idx is not None and selected_row_idx < len(styles):
             selected_style = styles[selected_row_idx]
             style_label = f"{selected_style.get('header_number', '')} — {selected_style.get('header_name', '')}"
+            if st.button("✏️ Edit / View Details", key="style_edit_btn", use_container_width=True, type="primary"):
+                st.session_state["style_selected_id"] = selected_style["id"]
+                st.rerun()
             with st.expander(f"📄 {style_label}", expanded=True):
                 raw_data = selected_style.get("data_json")
                 if isinstance(raw_data, str):

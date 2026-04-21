@@ -108,6 +108,9 @@ def _render_blocks_list() -> None:
         if selected_row_idx is not None and selected_row_idx < len(blocks):
             selected_block = blocks[selected_row_idx]
             blk_label = f"{selected_block.get('header_number', '')} — {selected_block.get('header_name', '')}"
+            if st.button("✏️ Edit / View Details", key="blk_edit_btn", use_container_width=True, type="primary"):
+                st.session_state["block_selected_id"] = selected_block["id"]
+                st.rerun()
             with st.expander(f"📄 {blk_label}", expanded=True):
                 raw_data = selected_block.get("data_json")
                 if isinstance(raw_data, str):
@@ -219,7 +222,7 @@ def _render_block_detail(record_id: str) -> None:
         st.subheader("🖼️ Front Image")
         preview_url = front_image.get("preview")
         if preview_url:
-            st.image(preview_url, use_column_width=True)
+            st.image(preview_url, use_container_width=True)
 
     with st.expander("🔍 Raw JSON", expanded=False):
         st.json(data)

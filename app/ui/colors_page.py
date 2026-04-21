@@ -113,6 +113,9 @@ def _render_colors_list() -> None:
         if selected_row_idx is not None and selected_row_idx < len(colors):
             selected_color = colors[selected_row_idx]
             color_label = f"{selected_color.get('header_number', '')} — {selected_color.get('header_name', '')}"
+            if st.button("✏️ Edit / View Details", key="col_edit_btn", use_container_width=True, type="primary"):
+                st.session_state["color_selected_id"] = selected_color["id"]
+                st.rerun()
             with st.expander(f"📄 {color_label}", expanded=True):
                 raw_data = selected_color.get("data_json")
                 if isinstance(raw_data, str):
