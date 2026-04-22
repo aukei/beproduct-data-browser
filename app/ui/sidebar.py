@@ -154,9 +154,9 @@ def _render_sync_controls() -> None:
             return
         
         st.info("⏳ Sync in progress…")
-        # Add a refresh button to check status manually
-        if st.button("🔄 Check Status", key="check_status"):
-            st.rerun()
+        # Auto-poll: rerun after a short delay to check if sync finished
+        time.sleep(2)
+        st.rerun()
     elif file_status.get("results"):
         results = file_status["results"]
         all_ok = all(ok for ok, _ in results.values()) if results else False

@@ -392,9 +392,14 @@ def sync_data_tables(
         try:
             client = get_client()
 
-            # List all data tables
-            tables_response = client.raw_api.post("DataTable/List", body={})
-            tables = tables_response if isinstance(tables_response, list) else tables_response.get("items", [])
+            # List all data tables.
+            # pageSize / pageNumber are URL query params (**kwargs), NOT body fields.
+            # The body only accepts RawSearch: {"filters": [...]}
+            list_body = {"filters": []}
+            tables_response = client.raw_api.post(
+                "DataTable/List", body=list_body, pageSize=1000, pageNumber=0
+            )
+            tables = tables_response.get("result", []) if isinstance(tables_response, dict) else tables_response
 
             table_count = 0
             row_count = 0
@@ -407,10 +412,13 @@ def sync_data_tables(
                 db.upsert_data_table(table)
                 table_count += 1
 
-                # Sync rows for each table
+                # Sync rows for each table (also paginated via query params)
                 try:
-                    rows_response = client.raw_api.post(f"DataTable/{table_id}/Data", body={})
-                    rows = rows_response if isinstance(rows_response, list) else rows_response.get("items", [])
+                    data_body = {"filters": []}
+                    rows_response = client.raw_api.post(
+                        f"DataTable/{table_id}/Data", body=data_body, pageSize=5000, pageNumber=0
+                    )
+                    rows = rows_response.get("result", []) if isinstance(rows_response, dict) else rows_response
 
                     for row in rows:
                         if row.get("id"):

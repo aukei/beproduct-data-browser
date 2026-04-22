@@ -14,11 +14,6 @@ import pandas as pd
 import streamlit as st
 
 from app import db
-from app.push import (
-    push_data_table_row,
-    add_data_table_row,
-    delete_data_table_row as push_delete_dt_row,
-)
 
 
 def render_data_tables_page() -> None:
@@ -164,6 +159,7 @@ def _render_data_table_detail(table_id: str) -> None:
             col_edit, col_delete = st.columns(2)
             with col_delete:
                 if st.button("Delete Row", type="secondary"):
+                    from app.push import delete_data_table_row as push_delete_dt_row
                     with st.spinner("Deleting row..."):
                         ok, msg = push_delete_dt_row(table_id, row_id)
                     if ok:
@@ -188,6 +184,7 @@ def _render_data_table_detail(table_id: str) -> None:
                         edited_fields.append({"id": fid, "value": new_val})
 
                     if st.form_submit_button("Push Row Update", use_container_width=True, type="primary"):
+                        from app.push import push_data_table_row
                         with st.spinner("Pushing row update..."):
                             ok, msg = push_data_table_row(table_id, row_id, edited_fields)
                         if ok:
@@ -232,6 +229,7 @@ def _render_add_row_form(table_id: str) -> None:
             field_val = st.text_input("Field Value")
             if st.form_submit_button("Add Row"):
                 if field_id:
+                    from app.push import add_data_table_row
                     with st.spinner("Adding row..."):
                         ok, msg, new_id = add_data_table_row(table_id, [{"id": field_id, "value": field_val}])
                     if ok:
@@ -250,6 +248,7 @@ def _render_add_row_form(table_id: str) -> None:
             new_fields.append({"id": fid, "value": val})
 
         if st.form_submit_button("Add Row", type="primary", use_container_width=True):
+            from app.push import add_data_table_row
             with st.spinner("Adding row..."):
                 ok, msg, new_id = add_data_table_row(table_id, new_fields)
             if ok:

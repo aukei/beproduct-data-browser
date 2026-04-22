@@ -12,8 +12,6 @@ import pandas as pd
 import streamlit as st
 
 from app import db
-from app.push import create_user
-from app.ui._create_dialog import show_create_entity_dialog
 
 
 # ── Raw JSON Dialog ──────────────────────────────────────────────────────
@@ -48,6 +46,8 @@ def _render_users_list() -> None:
             st.session_state["show_create_user"] = True
 
     if st.session_state.get("show_create_user"):
+        from app.push import create_user
+        from app.ui._create_dialog import show_create_entity_dialog
         show_create_entity_dialog(
             "User",
             on_create_callback=lambda fields: create_user(fields),

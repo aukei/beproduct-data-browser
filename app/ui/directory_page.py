@@ -13,8 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from app import db
-from app.push import push_directory, create_directory_entry
-from app.ui._create_dialog import show_create_entity_dialog
+from app.push import push_directory
 
 
 # ── Raw JSON Dialog ──────────────────────────────────────────────────────
@@ -49,6 +48,8 @@ def _render_directory_list() -> None:
             st.session_state["show_create_directory"] = True
 
     if st.session_state.get("show_create_directory"):
+        from app.push import create_directory_entry
+        from app.ui._create_dialog import show_create_entity_dialog
         show_create_entity_dialog(
             "Directory",
             on_create_callback=lambda fields: create_directory_entry(fields),
