@@ -6,9 +6,12 @@ A **Streamlit** web app that keeps a local sync copy of your [BeProduct](https:/
 
 | Feature | Detail |
 |---|---|
-| **Local sync** | Downloads Styles, Materials, Color Palettes, Directory records into SQLite |
+| **Local sync** | Downloads Styles, Materials, Color Palettes, Images, Blocks, Directory, Users, and Data Tables into SQLite |
 | **Incremental sync** | Every 15 min (configurable) — only fetches records changed since last sync |
-| **Browser UI** | Search, filter by folder, click-to-detail with full nested data |
+| **Full CRUD** | Create, read, update, and delete records for Styles, Materials, Colors, Images, and Blocks |
+| **Schema-based editor** | Field editor renders proper widgets (dropdowns, multiselect, date pickers, partner lookups) based on field type and folder schema |
+| **Cross-references** | Colorway detail shows linked Images and Color palettes; Directory shows referencing Styles/Materials |
+| **Data Tables** | Browse and edit custom lookup tables via raw API (SDK has no wrapper) |
 | **Edit + push-back** | Edit attribute fields locally, push to BeProduct with one click |
 | **Rate limit display** | Shows API requests used / limit from response headers in real time |
 | **Dirty tracking** | Locally-modified records are flagged; conflicts with remote changes are handled gracefully |
@@ -211,23 +214,28 @@ beproduct-data-browser/
 ├── app/
 │   ├── config.py               # Settings from .env
 │   ├── beproduct_client.py     # SDK singleton + rate-limit header capture
-│   ├── db.py                   # SQLite schema and CRUD
-│   ├── sync.py                 # Full + incremental sync engine
+│   ├── db.py                   # SQLite schema and CRUD (7 entity tables + data_tables)
+│   ├── sync.py                 # Full + incremental sync engine (all entities)
 │   ├── push.py                 # Push-back: local → BeProduct SaaS
 │   └── ui/
-│       ├── main.py             # Streamlit entrypoint
+│       ├── main.py             # Streamlit entrypoint + routing
 │       ├── sidebar.py          # Navigation, sync controls, rate-limit widget
 │       ├── overview_page.py    # Home / summary dashboard
-│       ├── styles_page.py      # Style list + detail + edit
-│       ├── materials_page.py   # Material list + detail + edit
-│       ├── colors_page.py      # Color palette list + detail + edit
-│       └── directory_page.py   # Directory list + detail
+│       ├── styles_page.py      # Style list + detail + edit + create/delete
+│       ├── materials_page.py   # Material list + detail + edit + create/delete
+│       ├── colors_page.py      # Color palette list + detail + edit + create/delete
+│       ├── images_page.py      # Image list + detail + edit + create/delete
+│       ├── blocks_page.py      # Block list + detail + edit + create/delete
+│       ├── directory_page.py   # Directory list + detail + create
+│       ├── users_page.py       # Users list + detail + create
+│       ├── data_tables_page.py # Data Tables list + rows + edit/add/delete
+│       ├── _field_editor.py    # Shared schema-based field editor component
+│       ├── _create_dialog.py   # Shared "Create New Record" dialog
+│       └── _delete_dialog.py   # Shared "Delete Record" confirmation dialog
 ├── scripts/
 │   ├── get_refresh_token.py          # One-time OAuth token bootstrap helper
-│   └── upload_to_databricks.py       # Bulk export: all 6 models to Databricks Delta
-├── plans/
-│   └── beproduct-data-browser-plan.md
-├── data/                       # SQLite database lives here (gitignored)
+│   └── upload_to_databricks.py       # Bulk export: all models to Databricks Delta
+├── data/                       # SQLite database (gitignored)
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt            # App dependencies
@@ -268,12 +276,85 @@ At **runtime**, the BeProduct Python SDK uses `client_id + client_secret + refre
 
 ## Data Entities in Scope
 
-| Entity | Read | Write |
-|---|---|---|
-| Styles | ✅ List + Get | ✅ `attributes_update` |
-| Materials | ✅ List + Get | ✅ `attributes_update` |
-| Color Palettes | ✅ List + Get | ✅ `attributes_update` |
-| Directory | ✅ List + Get | ✅ `directory_add` |
+| Entity | Read | Write | Add | Delete | Notes |
+|---|---|---|---|---|---|
+| Styles | ✅ List + Get | ✅ `attributes_update` | ✅ `attributes_create` | ✅ `attributes_delete` | Full CRUD |
+| Materials | ✅ List + Get | ✅ `attributes_update` | ✅ `attributes_create` | ✅ `attributes_delete` | Full CRUD |
+| Color Palettes | ✅ List + Get | ✅ `attributes_update` | ✅ `attributes_create` | ✅ `attributes_delete` | Full CRUD |
+| Images | ✅ List + Get | ✅ `attributes_update` | ✅ `attributes_create` | ✅ `attributes_delete` | Full CRUD |
+| Blocks | ✅ List + Get | ✅ `attributes_update` | ✅ `attributes_create` | ✅ `attributes_delete` | Full CRUD |
+| Directory | ✅ List + Get | ✅ `directory_add` (upsert) | ✅ `directory_add` | ❌ No API | Create only (upsert) |
+| Users | ✅ List + Get | ✅ `user_update` | ✅ `user_create` | ❌ No API | No delete |
+| Data Tables | ✅ via `raw_api` | ✅ via `raw_api` | ✅ via `raw_api` | ✅ via `raw_api` | SDK has no wrapper; uses REST directly |
+
+## Entity Relationships
+
+| Source | Field | Target | Type |
+|--------|-------|--------|------|
+| Style/Material colorway | `colorSourceId` | Color palette color `color_source_id` | UUID FK |
+| Style/Material colorway | `imageHeaderId` | Image `id` | UUID FK |
+| Style/Material | `PartnerDropDown` field `.code` | Directory `id` | UUID FK |
+| Style/Material | `Users` field type | User record | Lookup |
+| All entities | `createdBy.id` / `modifiedBy.id` | User `id` | Audit trail |
+| Style | `sizeClasses[].id` | Block `sizeClasses[].id` | UUID match (template inheritance) |
+| Color chip | `Schema` keys | Data Table columns | Schema extension |
+
+> **Note**: Block and Material have NO direct foreign key. The association is through
+> Style, which references both Block (via sizeClass template) and Material (via BOM apps).
+> The API does not enforce referential integrity — cross-references resolve at display time.
+
+## BeProduct API vs SDK Coverage
+
+This project uses the [beproduct](https://pypi.org/project/beproduct/) Python SDK v0.6.30.
+The SDK wraps approximately 150 of the 262 REST API endpoints. The table below documents
+all API groups, their SDK coverage, and how to access unwrapped endpoints.
+
+The full OpenAPI specification is at:
+`https://developers.beproduct.com/swagger/v1/swagger.json`
+
+### SDK-Wrapped API Groups (10 resource handlers)
+
+| API Group | SDK Handler | Endpoints | Coverage | Notes |
+|-----------|-------------|-----------|----------|-------|
+| **Style** | `client.style` | 62 | Partial (~35/62) | Missing: FlatBom, Move, Block Link/Unlink, CBOM, etc. |
+| **Material** | `client.material` | 48 | Partial (~30/48) | Missing: Move, ColorwaySchema, SKU ops, etc. |
+| **Color** | `client.color` | 20 | Partial (~12/20) | Missing: ColorChipSchema, CompanyColors, etc. |
+| **Image** | `client.image` | 20 | Partial (~12/20) | Missing: Attachment ops, Page Reset, etc. |
+| **Block** | `client.block` | 23 | Partial (~8/23) | Missing: All Page CRUD, Attachment ops, etc. |
+| **Directory** | `client.directory` | 9 | Partial (7/9) | Missing: `Directory/Companies`, `Directory/Update/{id}` |
+| **Users** | `client.user` | 8 | Partial (6/8) | Missing: `GetById/{id}` (path-param variant) |
+| **Tracking** | `client.tracking` | 21 | Partial (10/21) | Missing: Plan Style/Material Add, Delete, etc. |
+| **Tag** | via entity mixins | 9 | Full | Folder-scoped tag CRUD via `_common_tags` mixin |
+| **Schema** | `client.schema` | 3 | Full | `get_folder_schema()` for Style, Material, Color |
+
+### API Groups with NO SDK Wrapper (accessible via `client.raw_api`)
+
+These API groups are available in the REST API but have **no SDK wrapper**.
+Access them using `client.raw_api.get()` / `client.raw_api.post()`:
+
+- **DataTable** (5 endpoints) — Custom lookup tables. **Implemented in this app.**
+- **Inbox** (10 endpoints) — Task management with message threads.
+- **MasterData** (5 endpoints) — Field & dropdown option management.
+- **LineSheet** (4 endpoints) — Line sheet generation for sales.
+- **Report** (4 endpoints) — Run saved reports and retrieve data.
+- **RateLimit** (1 endpoint) — Programmatic rate limit status check.
+- **Info** (1 endpoint) — API version info.
+
+### Accessing Unwrapped Endpoints
+
+```python
+from app.beproduct_client import get_client
+
+client = get_client()
+
+# GET request
+result = client.raw_api.get("Info/Version")
+
+# POST request with body
+tables = client.raw_api.post("DataTable/List", body={})
+```
+
+The `raw_api` automatically handles authentication, base URL construction, and token refresh.
 
 ---
 

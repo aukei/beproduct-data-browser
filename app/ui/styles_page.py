@@ -1,5 +1,6 @@
 """
 Styles page: list view with search/filter + detail/edit view with push-back.
+Includes create/delete functionality with cross-reference warnings.
 """
 
 from __future__ import annotations
@@ -10,8 +11,10 @@ from typing import Any, Optional
 import pandas as pd
 import streamlit as st
 
-from app import db
-from app.push import push_style
+from app import db, push
+from app.ui._create_dialog import show_create_entity_dialog
+from app.ui._delete_dialog import show_delete_confirmation_dialog
+from app.ui._field_editor import render_field_form
 
 
 # ── Raw JSON Dialog ──────────────────────────────────────────────────────
@@ -43,6 +46,28 @@ def render_styles_page() -> None:
 
 def _render_styles_list() -> None:
     st.subheader("All Styles")
+
+    # Create button
+    col_create, col_refresh = st.columns(2)
+    with col_create:
+        if st.button("➕ Create New Style", use_container_width=True):
+            st.session_state["show_create_style"] = True
+    
+    # Show create dialog if needed
+    if st.session_state.get("show_create_style"):
+        try:
+            users = db.get_users(limit=500)
+            directory = db.get_directory_records(limit=500)
+        except Exception:
+            users, directory = [], []
+        
+        show_create_entity_dialog(
+            "Style",
+            on_create_callback=push.create_style,
+            users_list=users,
+            directory_list=directory,
+        )
+        st.session_state["show_create_style"] = False
 
     # Filters row
     col1, col2, col3 = st.columns([3, 2, 1])
@@ -156,6 +181,32 @@ def _render_style_detail(record_id: str) -> None:
     if row.get("is_dirty"):
         st.warning("⚠️ This record has unpushed local changes.")
 
+    # ── Action buttons ───────────────────────────────────────────────────
+    col_actions1, col_actions2, col_actions3 = st.columns(3)
+    with col_actions1:
+        if st.button("🗑️ Delete Style", use_container_width=True, type="secondary"):
+            st.session_state["show_delete_style"] = True
+    with col_actions2:
+        pass
+    with col_actions3:
+        pass
+
+    # Show delete confirmation dialog
+    if st.session_state.get("show_delete_style"):
+        # Get referential impacts
+        impacts_color = db.get_colorways_referencing_color(record_id) if record_id else []
+        impacts_image = db.get_colorways_referencing_image(record_id) if record_id else []
+        all_impacts = impacts_color + impacts_image
+        
+        show_delete_confirmation_dialog(
+            "Style",
+            record_id,
+            f"{row.get('header_number', '')} — {row.get('header_name', '')}",
+            on_delete_callback=push.delete_style,
+            referential_impacts=all_impacts if all_impacts else None,
+        )
+        st.session_state["show_delete_style"] = False
+
     # ── Status bar ───────────────────────────────────────────────────────
     col1, col2, col3 = st.columns(3)
     col1.metric("Folder", row.get("folder_name", "—"))
@@ -169,31 +220,31 @@ def _render_style_detail(record_id: str) -> None:
     header_data = data.get("headerData", {})
     fields_list = header_data.get("fields", [])
 
-    READONLY_TYPES = {"UserLabel", "Auto"}
-    READONLY_IDS = {"created_by", "modified_by", "version"}
+    # Try to get folder schema for better field rendering
+    try:
+        schema = None
+        if row.get("folder_id"):
+            from app.beproduct_client import get_client
+            client = get_client()
+            schema_list = client.schema.get_folder_schema("Style", row.get("folder_id"))
+            schema = {s["field_id"]: s for s in schema_list}
+    except Exception:
+        schema = None
 
-    edited_fields: list[dict] = []
-    with st.form(key=f"style_form_{record_id}"):
-        for field in fields_list:
-            fid = field.get("id", "")
-            fname = field.get("name", fid)
-            ftype = field.get("type", "Text")
-            fval = field.get("value") or ""
-            readonly = ftype in READONLY_TYPES or fid in READONLY_IDS
+    edited_fields, save_clicked = render_field_form(
+        fields_list,
+        form_key=f"style_form_{record_id}",
+        schema_dict=schema or {},
+        users=db.get_users(limit=500),
+        directory=db.get_directory_records(limit=500),
+        show_submit=True,
+        submit_label="💾 Save Locally",
+        submit_type="secondary",
+    )
 
-            if readonly:
-                st.text_input(fname, value=str(fval), disabled=True, key=f"sf_{fid}")
-                edited_fields.append(field)
-            elif ftype == "TrueFalse":
-                new_val = st.checkbox(fname, value=str(fval).lower() in ("yes", "true", "1"), key=f"sf_{fid}")
-                edited_fields.append({**field, "value": "Yes" if new_val else "No"})
-            else:
-                new_val = st.text_input(fname, value=str(fval), key=f"sf_{fid}")
-                edited_fields.append({**field, "value": new_val})
-
-        col_save, col_push = st.columns(2)
-        save_clicked = col_save.form_submit_button("💾 Save Locally", use_container_width=True)
-        push_clicked = col_push.form_submit_button("🚀 Push to BeProduct", use_container_width=True, type="primary")
+    col_save, col_push = st.columns(2)
+    with col_push:
+        push_clicked = st.button("🚀 Push to BeProduct", use_container_width=True, type="primary")
 
     if save_clicked:
         updated_data = dict(data)
@@ -207,25 +258,31 @@ def _render_style_detail(record_id: str) -> None:
 
     if push_clicked:
         with st.spinner("Pushing to BeProduct…"):
-            ok, msg = push_style(record_id)
+            ok, msg = push.push_style(record_id)
         if ok:
             st.success(msg)
         else:
             st.error(msg)
         st.rerun()
 
-    # ── Colorways ────────────────────────────────────────────────────────
+    # ── Colorways with cross-references ──────────────────────────────────
     colorways = data.get("colorways", [])
     if colorways:
         st.divider()
         st.subheader("🎨 Colorways")
         cw_rows = []
         for cw in colorways:
+            cw_id = cw.get("id", "")
+            color_source_id = cw.get("colorSourceId", "")
+            image_header_id = cw.get("imageHeaderId", "")
+            
             cw_rows.append({
                 "Number": cw.get("colorNumber", ""),
                 "Name": cw.get("colorName", ""),
                 "Primary": cw.get("primaryColor", ""),
                 "Secondary": cw.get("secondaryColor", ""),
+                "Color Ref": color_source_id[:8] + "…" if color_source_id else "—",
+                "Image Ref": image_header_id[:8] + "…" if image_header_id else "—",
                 "Hidden": "Yes" if cw.get("hideColorway") else "No",
             })
         st.dataframe(pd.DataFrame(cw_rows), use_container_width=True, hide_index=True)

@@ -94,6 +94,7 @@ def render_sidebar() -> str:
                 "🧱 Blocks",
                 "📒 Directory",
                 "👤 Users",
+                "📊 Data Tables",
             ],
             label_visibility="collapsed",
         )
@@ -283,5 +284,6 @@ def _render_db_counts() -> None:
         st.metric("Blocks", counts.get("blocks", 0), delta=f"{counts.get('blocks_dirty', 0)} pending" if counts.get('blocks_dirty') else None)
         st.metric("Directory", counts.get("directory", 0))
         st.metric("Users", counts.get("users", 0))
+        st.metric("Data Tables", counts.get("data_tables", 0))
     except Exception as e:
         st.caption(f"DB not initialised: {e}")

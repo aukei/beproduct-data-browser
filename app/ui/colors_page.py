@@ -10,8 +10,10 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from app import db
-from app.push import push_color
+from app import db, push
+from app.ui._create_dialog import show_create_entity_dialog
+from app.ui._delete_dialog import show_delete_confirmation_dialog
+from app.ui._field_editor import render_field_form
 
 
 # ── Raw JSON Dialog ──────────────────────────────────────────────────────
@@ -40,6 +42,28 @@ def render_colors_page() -> None:
 
 def _render_colors_list() -> None:
     st.subheader("All Color Palettes")
+
+    # Create button
+    col_create, col_refresh = st.columns(2)
+    with col_create:
+        if st.button("➕ Create New Color Palette", use_container_width=True):
+            st.session_state["show_create_color"] = True
+    
+    # Show create dialog if needed
+    if st.session_state.get("show_create_color"):
+        try:
+            users = db.get_users(limit=500)
+            directory = db.get_directory_records(limit=500)
+        except Exception:
+            users, directory = [], []
+        
+        show_create_entity_dialog(
+            "Color",
+            on_create_callback=push.create_color,
+            users_list=users,
+            directory_list=directory,
+        )
+        st.session_state["show_create_color"] = False
 
     col1, col2, col3 = st.columns([3, 2, 1])
     with col1:
@@ -143,6 +167,27 @@ def _render_color_detail(record_id: str) -> None:
     if row.get("is_dirty"):
         st.warning("⚠️ This record has unpushed local changes.")
 
+    # ── Action buttons ───────────────────────────────────────────────────
+    col_actions1, col_actions2, col_actions3 = st.columns(3)
+    with col_actions1:
+        if st.button("🗑️ Delete Color", use_container_width=True, type="secondary"):
+            st.session_state["show_delete_color"] = True
+    with col_actions2:
+        pass
+    with col_actions3:
+        pass
+
+    # Show delete confirmation dialog
+    if st.session_state.get("show_delete_color"):
+        show_delete_confirmation_dialog(
+            "Color",
+            record_id,
+            f"{row.get('header_number', '')} — {row.get('header_name', '')}",
+            on_delete_callback=push.delete_color,
+            referential_impacts=None,
+        )
+        st.session_state["show_delete_color"] = False
+
     col1, col2, col3 = st.columns(3)
     col1.metric("Folder", row.get("folder_name", "—"))
     col2.metric("Active", "Yes" if row.get("active") else "No")
@@ -150,35 +195,35 @@ def _render_color_detail(record_id: str) -> None:
 
     st.divider()
 
-    # Editable attribute fields
     st.subheader("📝 Attributes")
     header_data = data.get("headerData", {})
     fields_list = header_data.get("fields", [])
-    READONLY_TYPES = {"UserLabel", "Auto"}
-    READONLY_IDS = {"created_by", "modified_by", "version"}
 
-    edited_fields = []
-    with st.form(key=f"col_form_{record_id}"):
-        for field in fields_list:
-            fid = field.get("id", "")
-            fname = field.get("name", fid)
-            ftype = field.get("type", "Text")
-            fval = field.get("value") or ""
-            readonly = ftype in READONLY_TYPES or fid in READONLY_IDS
+    # Try to get folder schema for better field rendering
+    try:
+        schema = None
+        if row.get("folder_id"):
+            from app.beproduct_client import get_client
+            client = get_client()
+            schema_list = client.schema.get_folder_schema("Color", row.get("folder_id"))
+            schema = {s["field_id"]: s for s in schema_list}
+    except Exception:
+        schema = None
 
-            if readonly:
-                st.text_input(fname, value=str(fval), disabled=True, key=f"cf_{fid}")
-                edited_fields.append(field)
-            elif ftype == "TrueFalse":
-                new_val = st.checkbox(fname, value=str(fval).lower() in ("yes", "true", "1"), key=f"cf_{fid}")
-                edited_fields.append({**field, "value": "Yes" if new_val else "No"})
-            else:
-                new_val = st.text_input(fname, value=str(fval), key=f"cf_{fid}")
-                edited_fields.append({**field, "value": new_val})
+    edited_fields, save_clicked = render_field_form(
+        fields_list,
+        form_key=f"color_form_{record_id}",
+        schema_dict=schema or {},
+        users=db.get_users(limit=500),
+        directory=db.get_directory_records(limit=500),
+        show_submit=True,
+        submit_label="💾 Save Locally",
+        submit_type="secondary",
+    )
 
-        col_save, col_push = st.columns(2)
-        save_clicked = col_save.form_submit_button("💾 Save Locally", use_container_width=True)
-        push_clicked = col_push.form_submit_button("🚀 Push to BeProduct", use_container_width=True, type="primary")
+    col_save, col_push = st.columns(2)
+    with col_push:
+        push_clicked = st.button("🚀 Push to BeProduct", use_container_width=True, type="primary")
 
     if save_clicked:
         updated_data = dict(data)
@@ -193,7 +238,7 @@ def _render_color_detail(record_id: str) -> None:
 
     if push_clicked:
         with st.spinner("Pushing to BeProduct…"):
-            ok, msg = push_color(record_id)
+            ok, msg = push.push_color(record_id)
         if ok:
             st.success(msg)
         else:

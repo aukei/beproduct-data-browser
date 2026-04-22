@@ -329,3 +329,387 @@ def _extract_colorways(colorways_list: list[dict]) -> list[dict]:
         }
         result.append(entry)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Create operations (new records)
+# ---------------------------------------------------------------------------
+
+def create_style(
+    folder_id: str,
+    fields: dict[str, Any],
+    colorways: Optional[list[dict]] = None,
+    sizes: Optional[list[dict]] = None,
+) -> tuple[bool, str, Optional[str]]:
+    """
+    Create a new style in BeProduct.
+    
+    Returns:
+        Tuple of (success: bool, message: str, new_record_id: Optional[str])
+    """
+    try:
+        client = get_client()
+        result = client.style.attributes_create(
+            folder_id=folder_id,
+            fields=fields,
+            colorways=colorways,
+            sizes=sizes,
+        )
+        
+        # result is the new style record
+        new_id = result.get("id")
+        if new_id:
+            # Upsert into local DB
+            db.upsert_style(result)
+            msg = f"Style '{fields.get('header_number', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create style: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_material(
+    folder_id: str,
+    fields: dict[str, Any],
+    colorways: Optional[list[dict]] = None,
+    sizes: Optional[list[dict]] = None,
+    suppliers: Optional[list[dict]] = None,
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new material in BeProduct."""
+    try:
+        client = get_client()
+        result = client.material.attributes_create(
+            folder_id=folder_id,
+            fields=fields,
+            colorways=colorways,
+            sizes=sizes,
+            suppliers=suppliers,
+        )
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_material(result)
+            msg = f"Material '{fields.get('header_number', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create material: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_color(
+    folder_id: str,
+    fields: dict[str, Any],
+    colors: Optional[list[dict]] = None,
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new color palette in BeProduct."""
+    try:
+        client = get_client()
+        result = client.color.attributes_create(
+            folder_id=folder_id,
+            fields=fields,
+            colors=colors,
+        )
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_color(result)
+            msg = f"Color palette '{fields.get('header_number', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create color palette: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_image(
+    folder_id: str,
+    fields: dict[str, Any],
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new image in BeProduct."""
+    try:
+        client = get_client()
+        result = client.image.attributes_create(
+            folder_id=folder_id,
+            fields=fields,
+        )
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_image(result)
+            msg = f"Image '{fields.get('header_number', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create image: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_block(
+    folder_id: str,
+    fields: dict[str, Any],
+    size_classes: Optional[list[dict]] = None,
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new block in BeProduct."""
+    try:
+        client = get_client()
+        result = client.block.attributes_create(
+            folder_id=folder_id,
+            fields=fields,
+            size_classes=size_classes,
+        )
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_block(result)
+            msg = f"Block '{fields.get('header_number', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create block: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_directory_entry(
+    fields: dict[str, Any],
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new directory entry in BeProduct."""
+    try:
+        client = get_client()
+        result = client.directory.directory_add(fields=fields)
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_directory_record(result)
+            msg = f"Directory entry '{fields.get('name', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create directory entry: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def create_user(
+    fields: dict[str, Any],
+) -> tuple[bool, str, Optional[str]]:
+    """Create a new user in BeProduct."""
+    try:
+        client = get_client()
+        result = client.user.user_create(fields=fields)
+        
+        new_id = result.get("id")
+        if new_id:
+            db.upsert_user(result)
+            msg = f"User '{fields.get('email', 'New')}' created successfully"
+            logger.info(msg)
+            return True, msg, new_id
+        else:
+            return False, "Create succeeded but no ID returned", None
+    
+    except Exception as e:
+        msg = f"Failed to create user: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+# ---------------------------------------------------------------------------
+# Delete operations
+# ---------------------------------------------------------------------------
+
+def delete_style(record_id: str) -> tuple[bool, str]:
+    """Delete a style from BeProduct and remove from local DB."""
+    try:
+        client = get_client()
+        client.style.attributes_delete(header_id=record_id)
+        db.delete_style(record_id)
+        msg = f"Style {record_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+    
+    except Exception as e:
+        msg = f"Failed to delete style {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+def delete_material(record_id: str) -> tuple[bool, str]:
+    """Delete a material from BeProduct and remove from local DB."""
+    try:
+        client = get_client()
+        client.material.attributes_delete(header_id=record_id)
+        db.delete_material(record_id)
+        msg = f"Material {record_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+    
+    except Exception as e:
+        msg = f"Failed to delete material {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+def delete_color(record_id: str) -> tuple[bool, str]:
+    """Delete a color palette from BeProduct and remove from local DB."""
+    try:
+        client = get_client()
+        client.color.attributes_delete(header_id=record_id)
+        db.delete_color(record_id)
+        msg = f"Color palette {record_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+    
+    except Exception as e:
+        msg = f"Failed to delete color palette {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+def delete_image(record_id: str) -> tuple[bool, str]:
+    """Delete an image from BeProduct and remove from local DB."""
+    try:
+        client = get_client()
+        client.image.attributes_delete(header_id=record_id)
+        db.delete_image(record_id)
+        msg = f"Image {record_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+    
+    except Exception as e:
+        msg = f"Failed to delete image {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+def delete_block(record_id: str) -> tuple[bool, str]:
+    """Delete a block from BeProduct and remove from local DB."""
+    try:
+        client = get_client()
+        client.block.attributes_delete(header_id=record_id)
+        db.delete_block(record_id)
+        msg = f"Block {record_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+    
+    except Exception as e:
+        msg = f"Failed to delete block {record_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+# ---------------------------------------------------------------------------
+# Data Table row operations (uses raw_api — no SDK wrapper)
+# ---------------------------------------------------------------------------
+
+def push_data_table_row(
+    table_id: str,
+    row_id: str,
+    row_fields: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """
+    Push a data table row update to BeProduct.
+    Uses raw_api since the SDK has no DataTable wrapper.
+    """
+    try:
+        client = get_client()
+        body = [
+            {
+                "rowId": row_id,
+                "rowFields": row_fields,
+                "deleteRow": False,
+            }
+        ]
+        result = client.raw_api.post(f"DataTable/{table_id}/Update", body=body)
+        db.mark_data_table_row_clean(row_id)
+        msg = f"Data table row {row_id} pushed successfully"
+        logger.info(msg)
+        return True, msg
+
+    except Exception as e:
+        msg = f"Failed to push data table row {row_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg
+
+
+def add_data_table_row(
+    table_id: str,
+    row_fields: list[dict[str, Any]],
+) -> tuple[bool, str, Optional[str]]:
+    """
+    Add a new row to a data table in BeProduct.
+    Returns (success, message, new_row_id).
+    """
+    try:
+        client = get_client()
+        body = [
+            {
+                "rowId": None,  # null = insert new row
+                "rowFields": row_fields,
+                "deleteRow": False,
+            }
+        ]
+        result = client.raw_api.post(f"DataTable/{table_id}/Update", body=body)
+
+        added_ids = []
+        if isinstance(result, dict):
+            added_ids = result.get("added", [])
+        
+        new_id = added_ids[0] if added_ids else None
+        msg = f"Data table row added successfully"
+        logger.info(msg)
+        return True, msg, new_id
+
+    except Exception as e:
+        msg = f"Failed to add data table row: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg, None
+
+
+def delete_data_table_row(
+    table_id: str,
+    row_id: str,
+) -> tuple[bool, str]:
+    """Delete a row from a data table in BeProduct."""
+    try:
+        client = get_client()
+        body = [
+            {
+                "rowId": row_id,
+                "rowFields": [],
+                "deleteRow": True,
+            }
+        ]
+        client.raw_api.post(f"DataTable/{table_id}/Update", body=body)
+        db.delete_data_table_row(row_id)
+        msg = f"Data table row {row_id} deleted successfully"
+        logger.info(msg)
+        return True, msg
+
+    except Exception as e:
+        msg = f"Failed to delete data table row {row_id}: {e}"
+        logger.error(f"{msg}\n{traceback.format_exc()}")
+        return False, msg

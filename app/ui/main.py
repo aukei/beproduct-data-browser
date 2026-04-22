@@ -131,6 +131,10 @@ def main() -> None:
         from app.ui.users_page import render_users_page
         render_users_page()
 
+    elif "Data Tables" in page:
+        from app.ui.data_tables_page import render_data_tables_page
+        render_data_tables_page()
+
     else:  # Overview
         from app.ui.overview_page import render_overview_page
         render_overview_page()

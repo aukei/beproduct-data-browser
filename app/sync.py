@@ -368,6 +368,7 @@ def sync_all(
     results["blocks"] = sync_blocks(incremental=incremental, progress=progress)
     results["users"] = sync_users(progress=progress)
     results["directory"] = sync_directory(progress=progress)
+    results["data_tables"] = sync_data_tables(progress=progress)
 
     return results
 
@@ -375,6 +376,62 @@ def sync_all(
 # ---------------------------------------------------------------------------
 # APScheduler job wrapper
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Data Tables sync (uses raw_api — no SDK wrapper)
+# ---------------------------------------------------------------------------
+
+def sync_data_tables(
+    progress: ProgressCallback = _noop_progress,
+) -> tuple[bool, str]:
+    """
+    Sync data tables from BeProduct using raw_api.
+    Lists all data tables, then syncs rows for each.
+    """
+    with _locks.setdefault("data_tables", threading.Lock()):
+        try:
+            client = get_client()
+
+            # List all data tables
+            tables_response = client.raw_api.post("DataTable/List", body={})
+            tables = tables_response if isinstance(tables_response, list) else tables_response.get("items", [])
+
+            table_count = 0
+            row_count = 0
+
+            for table in tables:
+                table_id = table.get("id")
+                if not table_id:
+                    continue
+
+                db.upsert_data_table(table)
+                table_count += 1
+
+                # Sync rows for each table
+                try:
+                    rows_response = client.raw_api.post(f"DataTable/{table_id}/Data", body={})
+                    rows = rows_response if isinstance(rows_response, list) else rows_response.get("items", [])
+
+                    for row in rows:
+                        if row.get("id"):
+                            db.upsert_data_table_row(table_id, row)
+                            row_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to sync rows for data table {table_id}: {e}")
+
+                progress("data_tables", table_count)
+
+            db.set_sync_meta("data_tables", sync_type="full")
+            msg = f"Synced {table_count} data table(s) with {row_count} total row(s)"
+            logger.info(msg)
+            progress("data_tables", table_count)
+            return True, msg
+
+        except Exception as e:
+            msg = f"Data tables sync failed: {e}"
+            logger.error(f"{msg}\n{traceback.format_exc()}")
+            return False, msg
+
 
 def scheduled_incremental_sync() -> None:
     """Called by APScheduler background job. Runs incremental sync silently."""

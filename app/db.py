@@ -184,6 +184,30 @@ CREATE TABLE IF NOT EXISTS rate_limit_log (
     requests_limit  INTEGER,
     reset_at        TEXT
 );
+
+CREATE TABLE IF NOT EXISTS data_tables (
+    id            TEXT PRIMARY KEY,
+    name          TEXT,
+    description   TEXT,
+    active        INTEGER DEFAULT 1,
+    created_at    TEXT,
+    modified_at   TEXT,
+    synced_at     TEXT,
+    data_json     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS data_table_rows (
+    id              TEXT PRIMARY KEY,
+    data_table_id   TEXT NOT NULL,
+    created_at      TEXT,
+    modified_at     TEXT,
+    synced_at       TEXT,
+    is_dirty        INTEGER DEFAULT 0,
+    data_json       TEXT,
+    FOREIGN KEY (data_table_id) REFERENCES data_tables(id)
+);
+CREATE INDEX IF NOT EXISTS idx_dt_rows_table ON data_table_rows(data_table_id);
+CREATE INDEX IF NOT EXISTS idx_dt_rows_dirty ON data_table_rows(is_dirty);
 """
 
 
@@ -982,8 +1006,359 @@ def get_row_counts() -> dict[str, int]:
         for table in ("styles", "materials", "colors", "images", "blocks", "users", "directory"):
             row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()
             counts[table] = row["c"] if row else 0
+        # Data tables count
+        try:
+            row = conn.execute("SELECT COUNT(*) as c FROM data_tables").fetchone()
+            counts["data_tables"] = row["c"] if row else 0
+        except Exception:
+            counts["data_tables"] = 0
         dirty: dict[str, int] = {}
         for table in ("styles", "materials", "colors", "images", "blocks"):
             row = conn.execute(f"SELECT COUNT(*) as c FROM {table} WHERE is_dirty=1").fetchone()
             dirty[f"{table}_dirty"] = row["c"] if row else 0
     return {**counts, **dirty}
+
+
+# ---------------------------------------------------------------------------
+# Delete operations
+# ---------------------------------------------------------------------------
+
+def delete_style(record_id: str) -> None:
+    """Delete a style from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM styles WHERE id=?", (record_id,))
+
+
+def delete_material(record_id: str) -> None:
+    """Delete a material from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM materials WHERE id=?", (record_id,))
+
+
+def delete_color(record_id: str) -> None:
+    """Delete a color palette from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM colors WHERE id=?", (record_id,))
+
+
+def delete_image(record_id: str) -> None:
+    """Delete an image from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM images WHERE id=?", (record_id,))
+
+
+def delete_block(record_id: str) -> None:
+    """Delete a block from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM blocks WHERE id=?", (record_id,))
+
+
+# ---------------------------------------------------------------------------
+# Cross-reference query helpers
+# ---------------------------------------------------------------------------
+
+def get_colorways_referencing_color(color_source_id: str) -> list[dict[str, Any]]:
+    """
+    Find all styles/materials whose colorways reference a specific color by colorSourceId.
+    Returns list of dicts: {entity_type, entity_id, header_number, colorway_count}
+    """
+    results = []
+    
+    with get_conn() as conn:
+        # Search styles
+        style_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM styles
+            WHERE data_json LIKE ?
+            """,
+            (f'%"colorSourceId":"{color_source_id}"%',),
+        ).fetchall()
+        
+        for row in style_rows:
+            try:
+                data = json.loads(row["data_json"])
+                colorway_count = sum(
+                    1 for cw in data.get("colorways", [])
+                    if cw.get("colorSourceId") == color_source_id
+                )
+                results.append({
+                    "entity_type": "Style",
+                    "entity_id": row["id"],
+                    "header_number": row["header_number"],
+                    "colorway_count": colorway_count,
+                })
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # Search materials
+        material_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM materials
+            WHERE data_json LIKE ?
+            """,
+            (f'%"colorSourceId":"{color_source_id}"%',),
+        ).fetchall()
+        
+        for row in material_rows:
+            try:
+                data = json.loads(row["data_json"])
+                colorway_count = sum(
+                    1 for cw in data.get("colorways", [])
+                    if cw.get("colorSourceId") == color_source_id
+                )
+                results.append({
+                    "entity_type": "Material",
+                    "entity_id": row["id"],
+                    "header_number": row["header_number"],
+                    "colorway_count": colorway_count,
+                })
+            except (json.JSONDecodeError, KeyError):
+                pass
+    
+    return results
+
+
+def get_colorways_referencing_image(image_header_id: str) -> list[dict[str, Any]]:
+    """
+    Find all styles/materials whose colorways reference a specific image by imageHeaderId.
+    Returns list of dicts: {entity_type, entity_id, header_number, colorway_count}
+    """
+    results = []
+    
+    with get_conn() as conn:
+        # Search styles
+        style_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM styles
+            WHERE data_json LIKE ?
+            """,
+            (f'%"imageHeaderId":"{image_header_id}"%',),
+        ).fetchall()
+        
+        for row in style_rows:
+            try:
+                data = json.loads(row["data_json"])
+                colorway_count = sum(
+                    1 for cw in data.get("colorways", [])
+                    if cw.get("imageHeaderId") == image_header_id
+                )
+                results.append({
+                    "entity_type": "Style",
+                    "entity_id": row["id"],
+                    "header_number": row["header_number"],
+                    "colorway_count": colorway_count,
+                })
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # Search materials
+        material_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM materials
+            WHERE data_json LIKE ?
+            """,
+            (f'%"imageHeaderId":"{image_header_id}"%',),
+        ).fetchall()
+        
+        for row in material_rows:
+            try:
+                data = json.loads(row["data_json"])
+                colorway_count = sum(
+                    1 for cw in data.get("colorways", [])
+                    if cw.get("imageHeaderId") == image_header_id
+                )
+                results.append({
+                    "entity_type": "Material",
+                    "entity_id": row["id"],
+                    "header_number": row["header_number"],
+                    "colorway_count": colorway_count,
+                })
+            except (json.JSONDecodeError, KeyError):
+                pass
+    
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Data Tables
+# ---------------------------------------------------------------------------
+
+def upsert_data_table(record: dict[str, Any]) -> None:
+    """Insert or update a data table metadata record."""
+    synced_at = _now_iso()
+    data_json = json.dumps(record)
+
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO data_tables
+                (id, name, description, active, created_at, modified_at, synced_at, data_json)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                description=excluded.description,
+                active=excluded.active,
+                created_at=excluded.created_at,
+                modified_at=excluded.modified_at,
+                synced_at=excluded.synced_at,
+                data_json=excluded.data_json
+            """,
+            (
+                record.get("id"),
+                record.get("name"),
+                record.get("description"),
+                1 if record.get("active", True) else 0,
+                record.get("createdAt"),
+                record.get("modifiedAt"),
+                synced_at,
+                data_json,
+            ),
+        )
+
+
+def get_data_tables(
+    search: Optional[str] = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Return data tables from local DB."""
+    sql = "SELECT * FROM data_tables WHERE 1=1"
+    params: list[Any] = []
+    if search:
+        sql += " AND (name LIKE ? OR description LIKE ?)"
+        params.extend([f"%{search}%", f"%{search}%"])
+    sql += " ORDER BY name LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def get_data_table(table_id: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM data_tables WHERE id=?", (table_id,)).fetchone()
+    return _row_to_dict(row) if row else None
+
+
+def upsert_data_table_row(table_id: str, row_record: dict[str, Any]) -> None:
+    """Insert or update a data table row."""
+    synced_at = _now_iso()
+    data_json = json.dumps(row_record)
+
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO data_table_rows
+                (id, data_table_id, created_at, modified_at, synced_at, is_dirty, data_json)
+            VALUES (?,?,?,?,?,0,?)
+            ON CONFLICT(id) DO UPDATE SET
+                data_table_id=excluded.data_table_id,
+                created_at=excluded.created_at,
+                modified_at=excluded.modified_at,
+                synced_at=excluded.synced_at,
+                is_dirty=0,
+                data_json=excluded.data_json
+            """,
+            (
+                row_record.get("id"),
+                table_id,
+                row_record.get("createdAt"),
+                row_record.get("modifiedAt"),
+                synced_at,
+                data_json,
+            ),
+        )
+
+
+def get_data_table_rows(
+    table_id: str,
+    dirty_only: bool = False,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    """Return rows for a specific data table."""
+    sql = "SELECT * FROM data_table_rows WHERE data_table_id=?"
+    params: list[Any] = [table_id]
+    if dirty_only:
+        sql += " AND is_dirty=1"
+    sql += " LIMIT ?"
+    params.append(limit)
+
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+def update_data_table_row_local(row_id: str, updated_json: dict[str, Any]) -> None:
+    """Mark a data table row as dirty and update its JSON."""
+    data_json = json.dumps(updated_json)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE data_table_rows SET data_json=?, is_dirty=1 WHERE id=?",
+            (data_json, row_id),
+        )
+
+
+def mark_data_table_row_clean(row_id: str) -> None:
+    with get_conn() as conn:
+        conn.execute("UPDATE data_table_rows SET is_dirty=0 WHERE id=?", (row_id,))
+
+
+def delete_data_table_row(row_id: str) -> None:
+    """Delete a data table row from local DB."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM data_table_rows WHERE id=?", (row_id,))
+
+
+def get_entities_by_partner(directory_id: str) -> list[dict[str, Any]]:
+    """
+    Find all styles/materials that reference a specific directory partner.
+    Returns list of dicts: {entity_type, entity_id, header_number, field_name}
+    """
+    results = []
+    
+    with get_conn() as conn:
+        # Search styles
+        style_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM styles
+            """,
+        ).fetchall()
+        
+        for row in style_rows:
+            try:
+                data = json.loads(row["data_json"])
+                fields_list = data.get("headerData", {}).get("fields", [])
+                for field in fields_list:
+                    if field.get("type") == "PartnerDropDown" and field.get("value") == directory_id:
+                        results.append({
+                            "entity_type": "Style",
+                            "entity_id": row["id"],
+                            "header_number": row["header_number"],
+                            "field_name": field.get("name", field.get("id")),
+                        })
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # Search materials
+        material_rows = conn.execute(
+            """
+            SELECT id, header_number, data_json FROM materials
+            """,
+        ).fetchall()
+        
+        for row in material_rows:
+            try:
+                data = json.loads(row["data_json"])
+                fields_list = data.get("headerData", {}).get("fields", [])
+                for field in fields_list:
+                    if field.get("type") == "PartnerDropDown" and field.get("value") == directory_id:
+                        results.append({
+                            "entity_type": "Material",
+                            "entity_id": row["id"],
+                            "header_number": row["header_number"],
+                            "field_name": field.get("name", field.get("id")),
+                        })
+            except (json.JSONDecodeError, KeyError):
+                pass
+    
+    return results
