@@ -32,8 +32,8 @@ def show_delete_confirmation_dialog(
     """
     entity_type_lower = entity_type.lower()
     
-    with st.dialog(f"🗑️ Delete {entity_type}"):
-        st.error(f"⚠️ Delete {entity_type.lower()}: {display_name}")
+    with st.container(border=True):
+        st.subheader(f"Delete {entity_type}: {display_name}")
         
         # Show referential impact warnings
         if referential_impacts:

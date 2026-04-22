@@ -1011,5 +1011,40 @@ Extract display values with: `pv.get("value", pv.get("id", ""))`.
 
 ---
 
+### Required Fields Per Folder (Confirmed from Live Schema)
+
+The `required` flag is **folder-level configuration** set by the BeProduct admin,
+not enforced at the API level. The create dialog must always call
+`client.schema.get_folder_schema()` after folder selection and render every field
+where `s.get("required") == True`.
+
+**Do not hardcode a fixed field list for create forms.**
+
+Confirmed live results (all folders, all entity types):
+
+| Entity | Folder | Required fields |
+|--------|--------|-----------------|
+| Style | Apparel | `header_number`, `header_name`, `year` DropDown, `season` DropDown, `team` DropDown |
+| Style | LFMU Licensed Brands | same as Apparel |
+| Style | LFMU Private Labels | same as Apparel |
+| Style | LFMU Walmart | same as Apparel |
+| Style | Templates | same as Apparel |
+| Material | 01 Knits | `header_number`, `header_name`, `material_type` DropDown, `material_category` DropDown |
+| Material | 02 Wovens – 08 Stitches | same as 01 Knits |
+| Material | ZZ ARTWORKS | same + `customer_retailer` DropDown |
+| Color | Apparel | `header_number`, `header_name`, `year`, `season`, `palette_type` DropDown, `team` DropDown |
+| Color | LFMU * folders | same as Apparel |
+| Color | 00 CSI WALMART SEASONAL PALETTES | `header_number`, `header_name`, `year`, `season`, `palette_type` (no `team`) |
+| Image | all folders | `header_number`, `header_name` only |
+| Block | all folders | `header_number`, `header_name` only |
+| Directory | N/A (no folder) | `directoryId`, `name`, `partnerType` |
+| User | N/A (no folder) | `email`, `username`, `firstName`, `lastName` |
+
+The `_create_dialog.py` implementation fetches schema dynamically after folder
+selection via `_get_schema_fields(entity_lower, folder_id)`, so new required
+fields added in the portal are automatically included without code changes.
+
+---
+
 *Last updated: 2026-04-22. Generated from live API testing and Swagger analysis.*
 *Swagger spec version: v1 (2026.3.31.1001)*
