@@ -50,14 +50,23 @@ def _get_directory_partners() -> list[dict[str, str]]:
     ]
 
 
+def _extract_user_name(user: dict[str, Any]) -> str:
+    """Extract display name from user dict (handles both formatted and raw DB formats)."""
+    # If 'name' key exists, use it (pre-formatted)
+    if "name" in user:
+        return user["name"]
+    # Otherwise construct from first_name, last_name, username
+    constructed = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+    return constructed or user.get("username", "")
+
+
 def _get_user_options() -> list[dict[str, str]]:
     """Load users from local DB for Users-type fields."""
     users = db.get_users(limit=5000)
     return [
         {
             "id": u["id"],
-            "name": f"{u.get('first_name', '')} {u.get('last_name', '')}".strip()
-                   or u.get("username", ""),
+            "name": _extract_user_name(u),
             "email": u.get("email", ""),
         }
         for u in users
@@ -266,7 +275,8 @@ def render_field(
             current_id = fval
 
         if users:
-            user_labels = ["(None)"] + [f"{u['name']} ({u.get('email', '')})" for u in users]
+            # Extract user name handling both formatted and raw DB formats
+            user_labels = ["(None)"] + [f"{_extract_user_name(u)} ({u.get('email', '')})" for u in users]
             user_ids = [""] + [u["id"] for u in users]
             try:
                 idx = user_ids.index(current_id)

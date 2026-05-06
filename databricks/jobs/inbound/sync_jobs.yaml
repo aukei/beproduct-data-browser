@@ -1,0 +1,180 @@
+# Databricks Jobs Configuration - Inbound Sync (BeProduct → Delta)
+# 
+# Deploy with: databricks jobs configure --json-file sync_jobs.json
+# Or use Databricks Terraform Provider for IaC
+#
+# Schedule: All jobs run every 6 hours, staggered by 30 min to avoid API thundering herd
+# Times: 00:00, 06:00, 12:00, 18:00 UTC
+
+jobs:
+  - name: "beproduct-sync-styles"
+    description: "Sync Styles from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 0 0,6,12,18 * * ?"  # 00:00 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_styles"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/01_sync_styles"
+          base_parameters:
+            incremental_mode: "true"
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 2
+        timeout_seconds: 3600
+        max_retries: 1
+        retry_on_timeout: false
+
+  - name: "beproduct-sync-materials"
+    description: "Sync Materials from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 30 0,6,12,18 * * ?"  # 00:30 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_materials"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/02_sync_materials"
+          base_parameters:
+            incremental_mode: "true"
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 2
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-colors"
+    description: "Sync Color Palettes from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 0 1,7,13,19 * * ?"  # 01:00 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_colors"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/03_sync_colors"
+          base_parameters:
+            incremental_mode: "true"
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-images"
+    description: "Sync Images from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 30 1,7,13,19 * * ?"  # 01:30 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_images"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/04_sync_images"
+          base_parameters:
+            incremental_mode: "true"
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-blocks"
+    description: "Sync Blocks from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 0 2,8,14,20 * * ?"  # 02:00 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_blocks"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/05_sync_blocks"
+          base_parameters:
+            incremental_mode: "true"
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-directory"
+    description: "Sync Directory from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 30 2,8,14,20 * * ?"  # 02:30 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_directory"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/06_sync_directory"
+          base_parameters:
+            target_catalog: "main"
+            target_schema: "beproduct"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-users"
+    description: "Sync Users from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 0 3,9,15,21 * * ?"  # 03:00 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_users"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/07_sync_users"
+          base_parameters:
+            target_catalog: "main"
+            target_schema: "beproduct"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
+
+  - name: "beproduct-sync-data-tables"
+    description: "Sync Data Tables from BeProduct to Databricks Delta"
+    schedule:
+      quartz_cron_expression: "0 30 3,9,15,21 * * ?"  # 03:30 UTC
+      timezone_id: "UTC"
+    max_concurrent_runs: 1
+    tasks:
+      - task_key: "sync_data_tables"
+        notebook_task:
+          notebook_path: "/Workspace/beproduct/notebooks/inbound/08_sync_data_tables"
+          base_parameters:
+            target_catalog: "main"
+            target_schema: "beproduct"
+            batch_size: "1000"
+        new_cluster:
+          spark_version: "14.3.x-scala2.12"
+          node_type_id: "i3.xlarge"
+          num_workers: 1
+        timeout_seconds: 3600
+        max_retries: 1
