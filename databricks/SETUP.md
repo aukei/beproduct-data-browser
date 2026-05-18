@@ -317,7 +317,7 @@ LIMIT 100;
 SELECT
     lf_style_number,
     get_json_object(data_json, '$.attributes.Brand') as brands,
-    get_json_object(data_json, '$.attributes."Lot code"') as lot_code,
+  get_json_object(data_json, '$.attributes."Lot Code"') as lot_code,
     synced_at
 FROM main.beproduct.ktb_styles
 LIMIT 10;

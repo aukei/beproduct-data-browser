@@ -16,7 +16,7 @@ Parameters:
 
 Field Mapping:
   Compulsory fields (extracted as columns):
-    - LF Sytle Number → lf_style_number
+        - LF Style Number → lf_style_number
     - Description → description
     - Team → team
     - Season → season
@@ -27,11 +27,11 @@ Field Mapping:
     - Customer Style Number → customer_style_number
     - Product Category → product_category
     - Product Sub Category → product_sub_category
-    - Divison → division
+    - Division → division
     - Brands → brands
     - Garment Finish → garment_finish
     - Techpack Stage → techpack_stage
-    - Lot code → lot_code
+    - Lot Code → lot_code
     - Parent Vendor → parent_vendor
     - Factory → factory
 
@@ -233,7 +233,7 @@ print("✅ BeProduct API client initialized")
 
 # Map BeProduct field names to table column names
 COMPULSORY_FIELDS = {
-    "LF Sytle Number": "lf_style_number",
+    "LF Style Number": "lf_style_number",
     "Description": "description",
     "Team": "team",
     "Season": "season",
@@ -245,17 +245,24 @@ INTERESTED_FIELDS = {
     "Customer Style Number": "customer_style_number",
     "Product Category": "product_category",
     "Product Sub Category": "product_sub_category",
-    "Divison": "division",
+    "Division": "division",
     "Brands": "brands",
     "Garment Finish": "garment_finish",
     "Techpack Stage": "techpack_stage",
-    "Lot code": "lot_code",
+    "Lot Code": "lot_code",
     "Parent Vendor": "parent_vendor",
     "Factory": "factory",
 }
 
 # All fields to extract as columns
 EXTRACTED_FIELDS = {**COMPULSORY_FIELDS, **INTERESTED_FIELDS}
+
+# Backward-compatible aliases for known historical misspellings/casing.
+FIELD_ALIASES = {
+    "LF Style Number": ["LF Sytle Number"],
+    "Division": ["Divison"],
+    "Lot Code": ["Lot code"],
+}
 
 FOLDER_NAME = "KTB"
 
@@ -450,6 +457,11 @@ def transform_style_record(record: Dict) -> Dict:
 
     for beproduct_name, column_name in EXTRACTED_FIELDS.items():
         value = attributes.get(beproduct_name)
+        if value is None:
+            for alias in FIELD_ALIASES.get(beproduct_name, []):
+                value = attributes.get(alias)
+                if value is not None:
+                    break
         row[column_name] = value
 
     # Store full record as JSON

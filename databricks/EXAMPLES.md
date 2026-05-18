@@ -241,7 +241,7 @@ LIMIT 5;
 -- Extract specific JSON fields
 SELECT
     lf_style_number,
-    get_json_object(data_json, '$.attributes."Lot code"') as lot_code,
+    get_json_object(data_json, '$.attributes."Lot Code"') as lot_code,
     get_json_object(data_json, '$.attributes."Garment Finish"') as garment_finish,
     get_json_object(data_json, '$.id') as beproduct_id,
     get_json_object(data_json, '$.createdOn') as created_on

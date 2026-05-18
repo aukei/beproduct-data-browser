@@ -121,9 +121,22 @@ The script is **fully interactive**:
 
 ### Table Schema
 
-Each table contains:
-- **Common fields**: `id`, `folder_id`, `folder_name`, `header_number`, `header_name`, `active`, `created_at`, `modified_at`, `synced_at`, `is_dirty`
-- **Full JSON**: `data_json` (STRING) — complete API response, suitable for unpacking nested data in downstream analytics
+The local SQLite tables intentionally keep a narrow shared shape for `styles`, `materials`, `colors`, and `images`:
+
+- **Shared columns**: `id`, `folder_id`, `folder_name`, `header_number`, `header_name`, `active`, `created_at`, `modified_at`, `synced_at`, `is_dirty`
+- **Raw payload**: `data_json` (STRING) — complete BeProduct API response, including folder schema metadata and all nested field values
+
+Schema-specific rules such as required fields, dropdown options, and directory-linked fields are not normalized into separate columns. They are read from the live BeProduct folder schema at runtime and preserved inside `data_json`.
+
+Live schema differs by folder. Current examples pulled from BeProduct:
+
+- **Style / KTB**: 45 schema entries, 5 required fields (`header_number`, `header_name`, `year`, `season`, `team`)
+- **Style / Walmart Templates**: 28 schema entries, 5 required fields (`header_number`, `header_name`, `year`, `season`, `team`)
+- **Color / KTB**: 15 schema entries, 6 required fields (`header_number`, `header_name`, `year`, `season`, `palette_type`, `team`)
+- **Image / KTB - Artworks and Graphics**: 22 schema entries, 6 required fields (`header_number`, `header_name`, `season`, `year`, `image_type`, `team`)
+- **Image / KTB - Construction Instructions**: 15 schema entries, 4 required fields (`header_number`, `header_name`, `image_type`, `team`)
+
+Material folders with the names `KTB` or `Walmart` were not present in the live API at the time of verification, so the app falls back to whatever Material folders the tenant actually exposes.
 
 ### Example
 

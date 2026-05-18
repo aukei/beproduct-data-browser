@@ -125,7 +125,7 @@ databricks jobs list-runs --job-id <JOB_ID> --limit 5
 ## Field Mapping
 
 **Compulsory** (always present):
-- `lf_style_number` ← LF Sytle Number
+- `lf_style_number` ← LF Style Number
 - `description` ← Description
 - `team` ← Team
 - `season` ← Season
