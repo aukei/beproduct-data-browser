@@ -10,7 +10,7 @@ Schedule: Daily at 7pm HKT (11am UTC)
 
 Parameters:
   - refresh_mode: "FULL" (default) or "INCREMENTAL"
-  - catalog: Target Databricks catalog (default: "main")
+  - catalog: Target Databricks catalog (default: "lft")
   - schema: Target Databricks schema (default: "beproduct")
   - table_name: Table name (default: "ktb_styles")
 """
@@ -53,17 +53,20 @@ print("✅ All libraries imported")
 
 # Configure job parameters with widgets
 print("\n⚙️  Configuring job parameters...")
-dbutils.widgets.text("refresh_mode", "INCREMENTAL", "Refresh Mode (FULL or INCREMENTAL)")
-dbutils.widgets.text("catalog", "main", "Catalog Name")
+dbutils.widgets.text("folder_name", "KTB", "BeProduct Folder Name")
+dbutils.widgets.text("refresh_mode", "FULL", "Refresh Mode (FULL or INCREMENTAL)")
+dbutils.widgets.text("catalog", "lft", "Catalog Name")
 dbutils.widgets.text("schema", "beproduct", "Schema Name")
 dbutils.widgets.text("table_name", "ktb_styles", "Table Name")
 
+folder_name = dbutils.widgets.get("folder_name")
 refresh_mode = dbutils.widgets.get("refresh_mode").upper()
 catalog = dbutils.widgets.get("catalog")
 schema = dbutils.widgets.get("schema")
 table_name = dbutils.widgets.get("table_name")
 
 print("✅ Parameters configured:")
+print(f"   folder_name: {folder_name}")
 print(f"   refresh_mode: {refresh_mode}")
 print(f"   catalog: {catalog}")
 print(f"   schema: {schema}")
@@ -84,6 +87,7 @@ print("SYNC CELL: Fetch, Transform, and Write Data")
 print("=" * 80)
 
 # Get parameters from previous cell
+folder_name_val = dbutils.widgets.get("folder_name")
 refresh_mode_val = dbutils.widgets.get("refresh_mode").upper()
 catalog_val = dbutils.widgets.get("catalog")
 schema_val = dbutils.widgets.get("schema")
@@ -92,32 +96,33 @@ table_name_val = dbutils.widgets.get("table_name")
 # Field mapping configuration
 # Keys are BeProduct field names (from headerData.fields[].name)
 # Values are Delta table column names
+# Note: Field names are case-sensitive and must match exactly!
 COMPULSORY_FIELDS = {
     "LF Style Number": "lf_style_number",
-    "Description": "description",
-    "Team": "team",
-    "Season": "season",
-    "Year": "year",
+    "DESCRIPTION": "description",
+    "TEAM": "team",
+    "SEASON": "season",
+    "YEAR": "year",
 }
 
 INTERESTED_FIELDS = {
-    "Product Status": "product_status",
-    "Customer Style Number": "customer_style_number",
-    "Product Category": "product_category",
-    "Product Sub Category": "product_sub_category",
-    "Division": "division",  # Note: might be "Divison" in some systems (typo)
-    "Brands": "brands",
-    "Garment Finish": "garment_finish",
-    "Techpack Stage": "techpack_stage",
-    "Lot code": "lot_code",
-    "Parent Vendor": "parent_vendor",
-    "Factory": "factory",
+    "PRODUCT STATUS": "product_status",
+    "CUSTOMER STYLE NUMBER / PLM #": "customer_style_number",
+    "PRODUCT CATEGORY": "product_category",
+    "PRODUCT SUB CATEGORY": "product_sub_category",
+    "Division": "division",
+    "BRANDS": "brands",
+    "GARMENT FINISH": "garment_finish",
+    "TECHPACK STAGE": "techpack_stage",
+    "Lot Code": "lot_code",
+    "PARENT VENDOR": "parent_vendor",
+    "FACTORY": "factory",
 }
 
 EXTRACTED_FIELDS = {**COMPULSORY_FIELDS, **INTERESTED_FIELDS}
-FOLDER_NAME = "KTB"
 
 print(f"\n📋 Configuration:")
+print(f"   Folder: {folder_name_val}")
 print(f"   Mode: {refresh_mode_val}")
 print(f"   Target: {catalog_val}.{schema_val}.{table_name_val}")
 print(f"   Extracted fields: {len(EXTRACTED_FIELDS)}")
@@ -207,7 +212,7 @@ print("Step 3: Fetch Styles from BeProduct")
 print("=" * 80)
 
 try:
-    print(f"📥 Fetching styles from folder '{FOLDER_NAME}'...")
+    print(f"📥 Fetching styles from folder '{folder_name_val}'...")
     print(f"   (This may take a moment...)")
     
     filters = None
@@ -282,18 +287,18 @@ try:
                 print(f"\n      ✅ VERIFICATION - Checking for expected fields:")
                 expected = {
                     "LF Style Number": "LFBP-WM1MJ-002",
-                    "Lot code": "112394630",
-                    "Brands": "Wrangler",
-                    "Customer Style Number": "127-WM1MJ-XXXX-009",
-                    "Description": "MOD MALE T1 WASHED LEATHER JACKET",
-                    "Garment Finish": "LEATHER JACKET + TBC Wash",
-                    "Product Category": "Jackets",
-                    "Product Sub Category": "Jacket",
-                    "Product Status": "Proto",
-                    "Season": "Spring",
-                    "Techpack Stage": "Draft",
-                    "Year": "2027",
-                    "Team": "KTB",
+                    "Lot Code": "112394630",
+                    "BRANDS": "['Wrangler']",  # Array
+                    "CUSTOMER STYLE NUMBER / PLM #": "127-WM1MJ-XXXX-009",
+                    "DESCRIPTION": "MOD MALE T1 WASHED LEATHER JACKET",
+                    "GARMENT FINISH": "LEATHER JACKET + TBC Wash",
+                    "PRODUCT CATEGORY": "Jackets",
+                    "PRODUCT SUB CATEGORY": "Jacket",
+                    "PRODUCT STATUS": "Proto",
+                    "SEASON": "Spring",
+                    "TECHPACK STAGE": "Draft",
+                    "YEAR": "2027",
+                    "TEAM": "KTB",
                 }
                 
                 for field_name, expected_value in expected.items():
@@ -322,11 +327,11 @@ try:
             
             print(f"     Result {len(all_styles)}: folder='{folder_name}', lf_style={lf_style}, id={style_id}...")
         
-        # Filter by KTB folder (case-sensitive match)
+        # Filter by specified folder (case-sensitive match)
         # Folder is nested: style.get("folder", {}).get("name")
         folder_obj = style.get("folder", {})
         actual_folder = folder_obj.get("name", "") if folder_obj else ""
-        if actual_folder == FOLDER_NAME:
+        if actual_folder == folder_name_val:
             styles.append(style)
             count += 1
             if count % 50 == 0:
@@ -334,7 +339,7 @@ try:
     
     print(f"\n✅ Fetch complete:")
     print(f"   Total results from API: {len(all_styles)}")
-    print(f"   Styles with folder='{FOLDER_NAME}': {len(styles)}")
+    print(f"   Styles with folder='{folder_name_val}': {len(styles)}")
     
     if len(all_styles) == 0:
         print(f"\n   ⚠️  API returned 0 results!")
@@ -345,7 +350,7 @@ try:
     
     if len(all_styles) > 0 and len(styles) == 0:
         unique_folders = set(s.get("folder", {}).get("name", "?") for s in all_styles if s.get("folder"))
-        print(f"\n   ⚠️  WARNING: API returned {len(all_styles)} styles, but NONE matched folder '{FOLDER_NAME}'")
+        print(f"\n   ⚠️  WARNING: API returned {len(all_styles)} styles, but NONE matched folder '{folder_name_val}'")
         print(f"   Unique folders in results: {unique_folders}")
         print(f"   (Check folder name spelling and case sensitivity)")
 
@@ -366,7 +371,7 @@ if not HAS_DATA:
     print(f"\n❌ No styles to sync")
     print(f"   Total API results: {len(all_styles)}")
     if len(all_styles) > 0:
-        print(f"   But none matched folder '{FOLDER_NAME}'")
+        print(f"   But none matched folder '{folder_name_val}'")
     print(f"\n⚠️  No data to process - skipping transformation and write steps")
 else:
     print(f"\n✅ {len(styles)} styles ready for processing")
@@ -414,7 +419,11 @@ if HAS_DATA:
         
         # Extract compulsory and interested fields
         for beproduct_name, column_name in EXTRACTED_FIELDS.items():
-            row[column_name] = attributes.get(beproduct_name)
+            value = attributes.get(beproduct_name)
+            # Convert arrays to comma-separated strings
+            if isinstance(value, list):
+                value = ", ".join(str(v) for v in value) if value else None
+            row[column_name] = value
         
         # Store full record as JSON
         row["data_json"] = json.dumps(record)
@@ -555,7 +564,7 @@ else:
     print("=" * 80)
     print(f"\n⚠️  Job completed with no data")
     print(f"\n   API returned: {len(all_styles)} total styles")
-    print(f"   Matched folder '{FOLDER_NAME}': 0 styles")
+    print(f"   Matched folder '{folder_name_val}': 0 styles")
     
     if len(all_styles) > 0:
         unique_folders = set(s.get("folder", {}).get("name", "?") for s in all_styles if s.get("folder"))
@@ -563,8 +572,8 @@ else:
         for folder in sorted(unique_folders):
             print(f"     - {folder}")
         print(f"\n   Please check:")
-        print(f"     1. Folder name spelling (is it '{FOLDER_NAME}' or something else?)")
-        print(f"     2. Folder name case-sensitivity (should be exactly: {FOLDER_NAME})")
+        print(f"     1. Folder name spelling (is it '{folder_name_val}' or something else?)")
+        print(f"     2. Folder name case-sensitivity (should be exactly: {folder_name_val})")
     else:
         print(f"\n   Please check:")
         print(f"     1. BeProduct credentials are valid")

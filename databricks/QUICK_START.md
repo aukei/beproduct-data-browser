@@ -30,6 +30,7 @@ Fill in:
 - **Name:** `BeProduct STYLE Master - KTB Daily Sync`
 - **Notebook path:** `/Repos/beproduct-data-browser/databricks/beproduct_style_sync`
 - **Parameters:**
+  - `folder_name = KTB` (or another folder if needed)
   - `refresh_mode = INCREMENTAL`
   - `catalog = main`
   - `schema = beproduct`

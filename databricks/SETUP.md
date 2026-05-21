@@ -333,6 +333,17 @@ LIMIT 10;
 
 ## Job Parameters
 
+### `folder_name` (Default: `KTB`)
+
+BeProduct folder to sync from. Must match the exact folder name in your BeProduct instance (case-sensitive).
+
+**Examples:**
+- `KTB` — sync from KTB folder
+- `LFMU` — sync from LFMU folder
+- `TEST` — sync from TEST folder
+
+To find available folders, check the BeProduct UI or run the job once to see which folders your account contains.
+
 ### `refresh_mode` (Default: `INCREMENTAL`)
 
 - **`INCREMENTAL`** (Recommended for daily runs)
@@ -342,7 +353,7 @@ LIMIT 10;
   - Falls back to FULL if no sync metadata exists
 
 - **`FULL`** (Use for manual recovery)
-  - Fetches all records from KTB folder
+  - Fetches all records from the specified folder
   - Replaces entire table contents
   - Useful after data corruption or schema changes
   - Slower but ensures clean state
@@ -357,6 +368,8 @@ Schema/database name where table will be created.
 Table name (without catalog/schema prefix).
 
 Full table path will be: `{catalog}.{schema}.{table_name}`
+
+**Tip:** You can create multiple jobs with different `folder_name` and `table_name` combinations to sync multiple BeProduct folders into separate Delta tables.
 
 ---
 

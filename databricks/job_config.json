@@ -7,8 +7,9 @@
       "notebook_task": {
         "notebook_path": "/Repos/beproduct-data-browser/databricks/beproduct_style_sync",
         "base_parameters": {
+          "folder_name": "KTB",
           "refresh_mode": "INCREMENTAL",
-          "catalog": "main",
+          "catalog": "lft",
           "schema": "beproduct",
           "table_name": "ktb_styles"
         }
