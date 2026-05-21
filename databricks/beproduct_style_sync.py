@@ -13,39 +13,47 @@ Parameters:
   - catalog: Target Databricks catalog (default: "main")
   - schema: Target Databricks schema (default: "beproduct")
   - table_name: Table name (default: "ktb_styles")
-
-Field Mapping:
-  Compulsory fields (extracted as columns):
-        - LF Style Number → lf_style_number
-    - Description → description
-    - Team → team
-    - Season → season
-    - Year → year
-
-  Interested fields (extracted as columns):
-    - Product Status → product_status
-    - Customer Style Number → customer_style_number
-    - Product Category → product_category
-    - Product Sub Category → product_sub_category
-    - Division → division
-    - Brands → brands
-    - Garment Finish → garment_finish
-    - Techpack Stage → techpack_stage
-    - Lot Code → lot_code
-    - Parent Vendor → parent_vendor
-    - Factory → factory
-
-  All other fields: stored in data_json column as JSON string
 """
 
 # COMMAND ----------
 
-# Widgets for job parameters
-dbutils.widgets.text(
-    "refresh_mode",
-    "INCREMENTAL",
-    "Refresh Mode (FULL or INCREMENTAL)"
-)
+# ============================================================================
+# CELL 1: Setup - Install SDK, Import, Configure Parameters
+# ============================================================================
+
+import sys
+import subprocess
+
+print("=" * 80)
+print("SETUP CELL: Install SDK, Import Libraries, Configure Parameters")
+print("=" * 80)
+
+# Install BeProduct SDK
+print("\n📦 Installing BeProduct SDK...")
+try:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "beproduct"])
+    print("✅ BeProduct SDK installed")
+except Exception as e:
+    print(f"❌ Failed: {str(e)}")
+    raise
+
+# Import libraries
+print("\n📚 Importing libraries...")
+import json
+import logging
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+from beproduct.sdk import BeProduct
+from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql import Row
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+print("✅ All libraries imported")
+
+# Configure job parameters with widgets
+print("\n⚙️  Configuring job parameters...")
+dbutils.widgets.text("refresh_mode", "INCREMENTAL", "Refresh Mode (FULL or INCREMENTAL)")
 dbutils.widgets.text("catalog", "main", "Catalog Name")
 dbutils.widgets.text("schema", "beproduct", "Schema Name")
 dbutils.widgets.text("table_name", "ktb_styles", "Table Name")
@@ -55,183 +63,35 @@ catalog = dbutils.widgets.get("catalog")
 schema = dbutils.widgets.get("schema")
 table_name = dbutils.widgets.get("table_name")
 
-print(f"🚀 Starting BeProduct STYLE sync job")
-print(f"   Mode: {refresh_mode} | Catalog: {catalog}.{schema}.{table_name}")
+print("✅ Parameters configured:")
+print(f"   refresh_mode: {refresh_mode}")
+print(f"   catalog: {catalog}")
+print(f"   schema: {schema}")
+print(f"   table_name: {table_name}")
 
-# COMMAND ----------
-
-import json
-import logging
-import requests
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
-import time
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+print("\n" + "=" * 80)
+print("✅ SETUP COMPLETE - Ready to sync")
+print("=" * 80)
 
 # COMMAND ----------
 
 # ============================================================================
-# BeProduct OAuth & API Client
+# CELL 2: Main Sync Logic
 # ============================================================================
 
-class BeProductClient:
-    """
-    Standalone BeProduct API client.
-    Handles OAuth token refresh and API requests.
-    """
+print("\n" + "=" * 80)
+print("SYNC CELL: Fetch, Transform, and Write Data")
+print("=" * 80)
 
-    def __init__(
-        self,
-        client_id: str,
-        client_secret: str,
-        refresh_token: str,
-        company_domain: str,
-    ):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.refresh_token = refresh_token
-        self.company_domain = company_domain
+# Get parameters from previous cell
+refresh_mode_val = dbutils.widgets.get("refresh_mode").upper()
+catalog_val = dbutils.widgets.get("catalog")
+schema_val = dbutils.widgets.get("schema")
+table_name_val = dbutils.widgets.get("table_name")
 
-        self.auth_url = "https://id.winks.io/connect/token"
-        self.api_base = f"https://us.beproduct.com/api/{company_domain}"
-
-        self.access_token: Optional[str] = None
-        self.token_expires_at: float = 0
-
-        # Refresh token immediately to start fresh
-        self._refresh_access_token()
-
-    def _refresh_access_token(self) -> None:
-        """Obtain a new access token using the refresh token."""
-        logger.info("Refreshing BeProduct access token...")
-
-        payload = {
-            "grant_type": "refresh_token",
-            "refresh_token": self.refresh_token,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret,
-        }
-
-        try:
-            response = requests.post(self.auth_url, data=payload, timeout=10)
-            response.raise_for_status()
-
-            data = response.json()
-            self.access_token = data["access_token"]
-            expires_in = data.get("expires_in", 28800)  # 8 hours default
-            self.token_expires_at = time.time() + expires_in
-
-            logger.info(
-                f"✅ Access token obtained (expires in {expires_in}s)"
-            )
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to refresh BeProduct token: {str(e)}"
-            ) from e
-
-    def _ensure_token_valid(self) -> None:
-        """Refresh token if it's expired or about to expire (within 60 seconds)."""
-        if time.time() >= self.token_expires_at - 60:
-            self._refresh_access_token()
-
-    def get(self, endpoint: str, params: Optional[Dict] = None) -> Dict:
-        """GET request to BeProduct API."""
-        self._ensure_token_valid()
-
-        url = f"{self.api_base}/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        }
-
-        logger.debug(f"GET {url} | params: {params}")
-
-        response = requests.get(url, headers=headers, params=params, timeout=30)
-        response.raise_for_status()
-
-        return response.json()
-
-    def post(
-        self,
-        endpoint: str,
-        body: Optional[Dict] = None,
-    ) -> Dict:
-        """POST request to BeProduct API."""
-        self._ensure_token_valid()
-
-        url = f"{self.api_base}/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json",
-        }
-
-        logger.debug(f"POST {url} | body: {body}")
-
-        response = requests.post(
-            url,
-            headers=headers,
-            json=body or {},
-            timeout=30,
-        )
-        response.raise_for_status()
-
-        return response.json()
-
-# COMMAND ----------
-
-# ============================================================================
-# Configuration & Secrets
-# ============================================================================
-
-# Retrieve BeProduct credentials from Databricks secrets
-# Expected secret scope: "beproduct" with keys:
-#   - client_id
-#   - client_secret
-#   - refresh_token
-#   - company_domain
-#
-# To set up secrets:
-# dbutils.secrets.put("beproduct", "client_id", "your_client_id")
-# dbutils.secrets.put("beproduct", "client_secret", "your_client_secret")
-# dbutils.secrets.put("beproduct", "refresh_token", "your_refresh_token")
-# dbutils.secrets.put("beproduct", "company_domain", "your_domain")
-
-try:
-    client_id = dbutils.secrets.get(scope="beproduct", key="client_id")
-    client_secret = dbutils.secrets.get(scope="beproduct", key="client_secret")
-    refresh_token = dbutils.secrets.get(scope="beproduct", key="refresh_token")
-    company_domain = dbutils.secrets.get(scope="beproduct", key="company_domain")
-except Exception as e:
-    raise RuntimeError(
-        f"Failed to retrieve BeProduct credentials from Databricks secrets.\n"
-        f"Ensure you have created a secret scope 'beproduct' with keys:\n"
-        f"  - client_id\n"
-        f"  - client_secret\n"
-        f"  - refresh_token\n"
-        f"  - company_domain\n"
-        f"Error: {str(e)}"
-    ) from e
-
-# Initialize API client
-api = BeProductClient(
-    client_id=client_id,
-    client_secret=client_secret,
-    refresh_token=refresh_token,
-    company_domain=company_domain,
-)
-
-print("✅ BeProduct API client initialized")
-
-# COMMAND ----------
-
-# ============================================================================
-# Field Mapping & Schema
-# ============================================================================
-
-# Map BeProduct field names to table column names
+# Field mapping configuration
+# Keys are BeProduct field names (from headerData.fields[].name)
+# Values are Delta table column names
 COMPULSORY_FIELDS = {
     "LF Style Number": "lf_style_number",
     "Description": "description",
@@ -245,347 +105,469 @@ INTERESTED_FIELDS = {
     "Customer Style Number": "customer_style_number",
     "Product Category": "product_category",
     "Product Sub Category": "product_sub_category",
-    "Division": "division",
+    "Division": "division",  # Note: might be "Divison" in some systems (typo)
     "Brands": "brands",
     "Garment Finish": "garment_finish",
     "Techpack Stage": "techpack_stage",
-    "Lot Code": "lot_code",
+    "Lot code": "lot_code",
     "Parent Vendor": "parent_vendor",
     "Factory": "factory",
 }
 
-# All fields to extract as columns
 EXTRACTED_FIELDS = {**COMPULSORY_FIELDS, **INTERESTED_FIELDS}
-
-# Backward-compatible aliases for known historical misspellings/casing.
-FIELD_ALIASES = {
-    "LF Style Number": ["LF Sytle Number"],
-    "Division": ["Divison"],
-    "Lot Code": ["Lot code"],
-}
-
 FOLDER_NAME = "KTB"
 
-print(f"📋 Field mapping:")
-print(f"   Compulsory: {len(COMPULSORY_FIELDS)} fields")
-print(f"   Interested: {len(INTERESTED_FIELDS)} fields")
-print(f"   Total extracted: {len(EXTRACTED_FIELDS)} fields")
-
-# COMMAND ----------
+print(f"\n📋 Configuration:")
+print(f"   Mode: {refresh_mode_val}")
+print(f"   Target: {catalog_val}.{schema_val}.{table_name_val}")
+print(f"   Extracted fields: {len(EXTRACTED_FIELDS)}")
 
 # ============================================================================
-# Sync Metadata Management
+# Step 1: Get Credentials and Initialize Client
 # ============================================================================
+
+print(f"\n{'='*80}")
+print("Step 1: Initialize BeProduct SDK")
+print("=" * 80)
+
+try:
+    print("🔐 Retrieving credentials from Databricks secrets...")
+    client_id = dbutils.secrets.get(scope="beproduct", key="client_id")
+    client_secret = dbutils.secrets.get(scope="beproduct", key="client_secret")
+    refresh_token = dbutils.secrets.get(scope="beproduct", key="refresh_token")
+    company_domain = dbutils.secrets.get(scope="beproduct", key="company_domain")
+    print("   ✓ client_id, client_secret, refresh_token, company_domain retrieved")
+    
+    print("🚀 Creating BeProduct SDK client...")
+    api = BeProduct(
+        client_id=client_id,
+        client_secret=client_secret,
+        refresh_token=refresh_token,
+        company_domain=company_domain,
+    )
+    print("✅ BeProduct SDK client initialized")
+except Exception as e:
+    print(f"❌ Failed to initialize: {str(e)}")
+    raise
+
+# ============================================================================
+# Step 2: Check Sync Metadata
+# ============================================================================
+
+print(f"\n{'='*80}")
+print("Step 2: Check Sync Metadata")
+print("=" * 80)
 
 def get_last_sync_timestamp() -> Optional[str]:
-    """
-    Get last successful sync timestamp for incremental refresh.
-    Returns ISO 8601 timestamp or None if not found.
-    """
+    """Get last sync timestamp for incremental refresh."""
     try:
-        spark.sql(f"USE CATALOG {catalog}")
-        spark.sql(f"USE SCHEMA {schema}")
-
-        # Check if metadata table exists
-        try:
-            result = spark.sql(
-                f"SELECT last_sync_at FROM {catalog}.{schema}.ktb_styles_sync_meta LIMIT 1"
-            ).collect()
-            if result:
-                return result[0]["last_sync_at"]
-        except Exception:
-            pass  # Table may not exist yet
-
+        spark.sql(f"USE CATALOG {catalog_val}")
+        spark.sql(f"USE SCHEMA {schema_val}")
+        
+        tables = spark.sql(
+            f"SELECT table_name FROM information_schema.tables "
+            f"WHERE table_catalog = '{catalog_val}' "
+            f"  AND table_schema = '{schema_val}' "
+            f"  AND table_name = 'ktb_styles_sync_meta'"
+        ).collect()
+        
+        if not tables:
+            return None
+        
+        result = spark.sql(
+            f"SELECT last_sync_at FROM {catalog_val}.{schema_val}.ktb_styles_sync_meta LIMIT 1"
+        ).collect()
+        
+        if result:
+            return result[0]["last_sync_at"]
+        return None
+    except Exception as e:
+        logger.warning(f"Could not retrieve metadata: {str(e)}")
         return None
 
-    except Exception as e:
-        logger.warning(f"Failed to retrieve sync metadata: {str(e)}")
-        return None
-
-
-def save_sync_metadata(last_sync_at: str) -> None:
-    """Save sync metadata for next incremental refresh."""
-    try:
-        spark.sql(f"USE CATALOG {catalog}")
-        spark.sql(f"USE SCHEMA {schema}")
-
-        # Create or replace metadata table
-        spark.sql(
-            f"""
-            CREATE OR REPLACE TABLE {catalog}.{schema}.ktb_styles_sync_meta
-            USING DELTA
-            AS SELECT '{last_sync_at}' AS last_sync_at
-            """
-        )
-        logger.info(f"✅ Sync metadata saved: {last_sync_at}")
-
-    except Exception as e:
-        logger.error(f"Failed to save sync metadata: {str(e)}")
-
-
-# COMMAND ----------
+if refresh_mode_val == "FULL":
+    print("🔄 FULL REFRESH mode")
+    since_iso = None
+else:
+    print("🔄 INCREMENTAL REFRESH mode")
+    since_iso = get_last_sync_timestamp()
+    if since_iso:
+        print(f"   Last sync: {since_iso}")
+    else:
+        print("   No previous sync found, switching to FULL refresh")
+        refresh_mode_val = "FULL"
+        since_iso = None
 
 # ============================================================================
-# Fetch Data from BeProduct API
+# Step 3: Fetch Styles
 # ============================================================================
 
-def fetch_styles(folder_name: str, since_iso: Optional[str] = None) -> List[Dict]:
-    """
-    Fetch Style records from BeProduct API for a specific folder.
+print(f"\n{'='*80}")
+print("Step 3: Fetch Styles from BeProduct")
+print("=" * 80)
 
-    If since_iso is provided, uses FolderModifiedAt > since_iso filter
-    for incremental fetch.
-
-    Returns list of style records.
-    """
-    logger.info(f"Fetching styles from folder '{folder_name}'...")
-
-    # Build filter if incremental
+try:
+    print(f"📥 Fetching styles from folder '{FOLDER_NAME}'...")
+    print(f"   (This may take a moment...)")
+    
     filters = None
     if since_iso:
-        filters = [
-            {
-                "field": "FolderModifiedAt",
-                "operator": "Gt",
-                "value": since_iso,
-            }
-        ]
-        logger.info(f"  Incremental filter: FolderModifiedAt > {since_iso}")
-
-    # API endpoint: /Style/attributes_list
-    # This endpoint supports folder filtering and modified_at filtering
-    endpoint = "Style/attributes_list"
-
-    styles = []
-    page_index = 0
-    page_size = 100
-
-    while True:
-        try:
-            logger.info(f"  Fetching page {page_index} (size: {page_size})...")
-
-            body = {
-                "pageIndex": page_index,
-                "pageSize": page_size,
-                "folderName": folder_name,
-            }
-
-            if filters:
-                body["filters"] = filters
-
-            response = api.post(endpoint, body=body)
-
-            items = response.get("items", [])
-            if not items:
-                logger.info(f"  No more records to fetch")
-                break
-
-            styles.extend(items)
-            logger.info(f"    Fetched {len(items)} records")
-
-            # Check if more pages exist
-            total = response.get("total", 0)
-            if len(styles) >= total:
-                break
-
-            page_index += 1
-
-        except Exception as e:
-            logger.error(f"Error fetching page {page_index}: {str(e)}")
-            raise
-
-    logger.info(f"✅ Fetched {len(styles)} total styles from '{folder_name}'")
-    return styles
-
-
-# COMMAND ----------
-
-# ============================================================================
-# Transform Records to Row Format
-# ============================================================================
-
-def extract_field_value(record: Dict, field_path: str) -> Any:
-    """
-    Extract value from record by field path.
-    Supports dot notation for nested fields.
-    
-    Examples:
-      - "description" → record["description"]
-      - "attributes.Season" → record["attributes"]["Season"]
-    """
-    parts = field_path.split(".")
-    value = record
-
-    for part in parts:
-        if isinstance(value, dict):
-            value = value.get(part)
-        else:
-            return None
-
-        if value is None:
-            return None
-
-    return value
-
-
-def transform_style_record(record: Dict) -> Dict:
-    """
-    Transform a BeProduct Style record into a Delta table row.
-
-    Extracts compulsory & interested fields as columns.
-    Stores full record as JSON.
-    Adds system fields (id, folder_name, created_at, modified_at, synced_at).
-
-    Returns dict ready for Delta write.
-    """
-    # System fields
-    row = {
-        "id": record.get("id"),
-        "folder_name": FOLDER_NAME,
-        "synced_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    # Timestamps
-    if "createdOn" in record:
-        row["created_at"] = record["createdOn"]
-
-    if "modifiedOn" in record:
-        row["modified_at"] = record["modifiedOn"]
-
-    # Extract named fields from attributes
-    attributes = record.get("attributes", {})
-
-    for beproduct_name, column_name in EXTRACTED_FIELDS.items():
-        value = attributes.get(beproduct_name)
-        if value is None:
-            for alias in FIELD_ALIASES.get(beproduct_name, []):
-                value = attributes.get(alias)
-                if value is not None:
-                    break
-        row[column_name] = value
-
-    # Store full record as JSON
-    row["data_json"] = json.dumps(record)
-
-    return row
-
-
-# COMMAND ----------
-
-# ============================================================================
-# Main Sync Logic
-# ============================================================================
-
-# Determine refresh mode
-if refresh_mode == "FULL":
-    logger.info("🔄 FULL REFRESH mode")
-    since_iso = None
-else:  # INCREMENTAL
-    logger.info("🔄 INCREMENTAL REFRESH mode")
-    since_iso = get_last_sync_timestamp()
-
-    if since_iso:
-        logger.info(f"   Last sync: {since_iso}")
+        filters = [{
+            "field": "FolderModifiedAt",
+            "operator": "Gt",
+            "value": since_iso,
+        }]
+        print(f"   Filter: FolderModifiedAt > {since_iso}")
     else:
-        logger.info(
-            "   No previous sync found, falling back to FULL refresh"
-        )
-        refresh_mode = "FULL"
+        print(f"   No filter (fetching all styles)")
+    
+    styles = []
+    all_styles = []
+    count = 0
+    
+    print(f"\n   Calling api.style.attributes_list(filters={filters})...")
+    
+    # Get iterator
+    iterator = api.style.attributes_list(filters=filters)
+    print(f"   Iterator created: {type(iterator)}")
+    
+    # Iterate through results
+    for style in iterator:
+        all_styles.append(style)
+        
+        # Show first result with FULL structure for debugging
+        if len(all_styles) == 1:
+            print(f"\n   🔍 FIRST RESULT STRUCTURE (id={style.get('id', '?')[:16]}...):")
+            print(f"      Top-level keys: {list(style.keys())}")
+            
+            # Check top-level for LF_Style_number
+            if "LF_Style_number" in style:
+                print(f"      LF_Style_number (top-level): {style['LF_Style_number']}")
+            
+            # Check attributes (might be in headerData instead)
+            attrs = style.get("attributes", {})
+            if attrs:
+                print(f"\n      Attributes ({len(attrs)} fields):")
+                # Show all attribute values for first style
+                for key, val in sorted(attrs.items()):
+                    print(f"        - '{key}': {repr(val)[:80]}")
+            
+            # Check headerData - this might contain the attributes
+            header_data = style.get("headerData", {})
+            if header_data:
+                print(f"\n      headerData ({len(header_data)} fields):")
+                # Show all header data values for first style
+                for key, val in sorted(header_data.items()):
+                    val_str = repr(val)[:100]
+                    print(f"        - '{key}': {val_str}")
+            
+            # Check folder
+            folder = style.get("folder", {})
+            if folder:
+                print(f"\n      Folder info:")
+                print(f"        - {folder}")
+            
+            # Extract fields from headerData.fields
+            fields_list = header_data.get("fields", [])
+            if fields_list:
+                print(f"\n      Fields from headerData.fields ({len(fields_list)} fields):")
+                fields_dict = {}
+                for field in fields_list:
+                    field_name = field.get("name", "?")
+                    field_value = field.get("value", "")
+                    fields_dict[field_name] = field_value
+                    print(f"        - '{field_name}': {repr(field_value)[:80]}")
+                
+                # Verify expected fields exist
+                print(f"\n      ✅ VERIFICATION - Checking for expected fields:")
+                expected = {
+                    "LF Style Number": "LFBP-WM1MJ-002",
+                    "Lot code": "112394630",
+                    "Brands": "Wrangler",
+                    "Customer Style Number": "127-WM1MJ-XXXX-009",
+                    "Description": "MOD MALE T1 WASHED LEATHER JACKET",
+                    "Garment Finish": "LEATHER JACKET + TBC Wash",
+                    "Product Category": "Jackets",
+                    "Product Sub Category": "Jacket",
+                    "Product Status": "Proto",
+                    "Season": "Spring",
+                    "Techpack Stage": "Draft",
+                    "Year": "2027",
+                    "Team": "KTB",
+                }
+                
+                for field_name, expected_value in expected.items():
+                    actual_value = fields_dict.get(field_name, "NOT_FOUND")
+                    status = "✓" if actual_value != "NOT_FOUND" else "✗"
+                    print(f"        {status} {field_name}: {actual_value}")
+            
+            print()
+        
+        # Show first few results with detailed info
+        if len(all_styles) <= 5:
+            style_id = style.get("id", "NO_ID")[:16]
+            
+            # Try multiple ways to get folder name
+            folder_obj = style.get("folder", {})
+            folder_name = folder_obj.get("name", "?") if folder_obj else "?"
+            
+            # Try multiple ways to get LF Style number
+            lf_style = (
+                style.get("LF_Style_number") or 
+                style.get("attributes", {}).get("LF Sytle Number") or
+                style.get("attributes", {}).get("LF_Style_number") or
+                style.get("attributes", {}).get("LF Style Number") or
+                "NO_LF"
+            )
+            
+            print(f"     Result {len(all_styles)}: folder='{folder_name}', lf_style={lf_style}, id={style_id}...")
+        
+        # Filter by KTB folder (case-sensitive match)
+        # Folder is nested: style.get("folder", {}).get("name")
+        folder_obj = style.get("folder", {})
+        actual_folder = folder_obj.get("name", "") if folder_obj else ""
+        if actual_folder == FOLDER_NAME:
+            styles.append(style)
+            count += 1
+            if count % 50 == 0:
+                print(f"     Matched {count} styles so far...")
+    
+    print(f"\n✅ Fetch complete:")
+    print(f"   Total results from API: {len(all_styles)}")
+    print(f"   Styles with folder='{FOLDER_NAME}': {len(styles)}")
+    
+    if len(all_styles) == 0:
+        print(f"\n   ⚠️  API returned 0 results!")
+        print(f"   Possible reasons:")
+        print(f"     - No styles exist in your BeProduct instance")
+        print(f"     - Credentials are invalid")
+        print(f"     - Filter is too restrictive")
+    
+    if len(all_styles) > 0 and len(styles) == 0:
+        unique_folders = set(s.get("folder", {}).get("name", "?") for s in all_styles if s.get("folder"))
+        print(f"\n   ⚠️  WARNING: API returned {len(all_styles)} styles, but NONE matched folder '{FOLDER_NAME}'")
+        print(f"   Unique folders in results: {unique_folders}")
+        print(f"   (Check folder name spelling and case sensitivity)")
 
-# Fetch data from BeProduct
-print(f"\n📥 Fetching data from BeProduct...")
-styles = fetch_styles(folder_name=FOLDER_NAME, since_iso=since_iso)
+except Exception as e:
+    print(f"❌ Failed to fetch styles: {str(e)}")
+    print(f"   Exception type: {type(e).__name__}")
+    import traceback
+    traceback.print_exc()
+    raise
 
-if not styles:
-    print(f"⚠️  No styles to sync")
-    dbutils.notebook.exit(0)
+# Check if we got any data
+print(f"\n   Checking data...")
+print(f"   styles list length: {len(styles)}")
 
-# Transform records
-print(f"\n🔄 Transforming {len(styles)} records...")
-rows = [transform_style_record(s) for s in styles]
+HAS_DATA = len(styles) > 0
 
-# Convert to Spark DataFrame
-from pyspark.sql.types import StructType, StructField, StringType
-from pyspark.sql import Row
+if not HAS_DATA:
+    print(f"\n❌ No styles to sync")
+    print(f"   Total API results: {len(all_styles)}")
+    if len(all_styles) > 0:
+        print(f"   But none matched folder '{FOLDER_NAME}'")
+    print(f"\n⚠️  No data to process - skipping transformation and write steps")
+else:
+    print(f"\n✅ {len(styles)} styles ready for processing")
 
-# Infer schema from first row
-if rows:
-    # Get all column names from transformed rows
-    all_cols = set()
-    for row in rows:
-        all_cols.update(row.keys())
-
-    # Create schema with StringType for all columns
-    # (allowing flexibility for different data types)
-    fields = [
-        StructField(col, StringType(), True) for col in sorted(all_cols)
-    ]
-    schema = StructType(fields)
-
-    # Create DataFrame
-    df = spark.createDataFrame(
-        [Row(**{col: str(row.get(col)) for col in all_cols} if row.get(col) is not None else {col: None} for col in all_cols)
-         for row in rows],
-        schema=schema,
-    )
-
-    print(f"✅ Transformed {len(rows)} rows")
-    print(f"\nDataFrame schema:")
-    df.printSchema()
-
-    # COMMAND ----------
-
+# Only proceed if we have data
+if HAS_DATA:
+    
     # ============================================================================
-    # Write to Delta Table
+    # Step 4: Transform Records
     # ============================================================================
 
-    print(f"\n💾 Writing to Delta table...")
-    print(
-        f"   Catalog: {catalog}"
-    )
-    print(f"   Schema: {schema}")
-    print(f"   Table: {table_name}")
+    print(f"\n{'='*80}")
+    print("Step 4: Transform Records")
+    print("=" * 80)
 
-    full_table_path = f"{catalog}.{schema}.{table_name}"
+    def transform_style_record(record: Dict) -> Dict:
+        """Transform a BeProduct Style record into a Delta table row."""
+        # Extract folder info
+        folder_obj = record.get("folder", {})
+        folder_name = folder_obj.get("name", "") if folder_obj else ""
+        
+        row = {
+            "id": record.get("id"),
+            "folder_name": folder_name,
+            "synced_at": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        if "createdAt" in record:
+            row["created_at"] = record["createdAt"]
+        if "modifiedAt" in record:
+            row["modified_at"] = record["modifiedAt"]
+        
+        # Extract attributes from headerData.fields (list of field objects)
+        # Each field has: {id, name, value, type, required, ...}
+        header_data = record.get("headerData", {})
+        fields_list = header_data.get("fields", [])
+        
+        # Convert fields list to dict keyed by field name
+        attributes = {}
+        for field in fields_list:
+            field_name = field.get("name", "")
+            field_value = field.get("value")
+            if field_name:
+                attributes[field_name] = field_value
+        
+        # Extract compulsory and interested fields
+        for beproduct_name, column_name in EXTRACTED_FIELDS.items():
+            row[column_name] = attributes.get(beproduct_name)
+        
+        # Store full record as JSON
+        row["data_json"] = json.dumps(record)
+        
+        return row
 
     try:
-        spark.sql(f"USE CATALOG {catalog}")
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
+        print(f"🔄 Transforming {len(styles)} records...")
+        rows = [transform_style_record(s) for s in styles]
+        print(f"✅ Transformed {len(rows)} rows")
+    except Exception as e:
+        print(f"❌ Failed to transform: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
 
-        # Determine write mode
-        write_mode = "overwrite" if refresh_mode == "FULL" else "append"
+    # ============================================================================
+    # Step 5: Create Spark DataFrame
+    # ============================================================================
 
-        # Write data
+    print(f"\n{'='*80}")
+    print("Step 5: Create Spark DataFrame")
+    print("=" * 80)
+
+    try:
+        print(f"📊 Creating DataFrame from {len(rows)} rows...")
+        
+        # Get all column names
+        all_cols = set()
+        for row in rows:
+            all_cols.update(row.keys())
+        sorted_cols = sorted(all_cols)
+        
+        print(f"   Columns: {len(sorted_cols)}")
+        
+        # Create schema
+        fields = [StructField(col, StringType(), True) for col in sorted_cols]
+        schema = StructType(fields)
+        
+        # Convert to Spark rows
+        def row_to_spark_row(row_dict, cols):
+            return Row(**{col: str(row_dict.get(col)) if row_dict.get(col) is not None else None for col in cols})
+        
+        spark_rows = [row_to_spark_row(row, sorted_cols) for row in rows]
+        df = spark.createDataFrame(spark_rows, schema=schema)
+        
+        row_count = df.count()
+        print(f"✅ DataFrame created: {row_count} rows")
+        
+    except Exception as e:
+        print(f"❌ Failed to create DataFrame: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+    # ============================================================================
+    # Step 6: Write to Delta Table
+    # ============================================================================
+
+    print(f"\n{'='*80}")
+    print("Step 6: Write to Delta Table")
+    print("=" * 80)
+
+    full_table_path = f"{catalog_val}.{schema_val}.{table_name_val}"
+
+    try:
+        print(f"💾 Writing to {full_table_path}...")
+        
+        spark.sql(f"USE CATALOG {catalog_val}")
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_val}.{schema_val}")
+        
+        write_mode = "overwrite" if refresh_mode_val == "FULL" else "append"
+        print(f"   Write mode: {write_mode}")
+        
         (
             df.write.format("delta")
             .mode(write_mode)
             .option("mergeSchema", "true")
             .saveAsTable(full_table_path)
         )
-
-        # Get row count
-        row_count = spark.sql(
-            f"SELECT COUNT(*) as cnt FROM {full_table_path}"
-        ).collect()[0]["cnt"]
-
+        
+        final_count = spark.sql(f"SELECT COUNT(*) as cnt FROM {full_table_path}").collect()[0]["cnt"]
         print(f"✅ Data written successfully")
-        print(f"   Total rows in table: {row_count}")
-
-        # Save metadata for next incremental sync
-        sync_timestamp = datetime.now(timezone.utc).isoformat()
-        save_sync_metadata(sync_timestamp)
-
-        # Log summary
-        print(f"\n📊 Sync Summary")
-        print(f"   Mode: {refresh_mode}")
-        print(f"   Rows synced: {len(rows)}")
-        print(f"   Write mode: {write_mode}")
-        print(f"   Table: {full_table_path}")
-        print(f"   Total rows: {row_count}")
-        print(f"   Timestamp: {sync_timestamp}")
-
+        print(f"   Total rows in table: {final_count}")
+        
     except Exception as e:
-        logger.error(f"Failed to write to Delta table: {str(e)}")
+        print(f"❌ Failed to write: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise
 
-print("\n✅ BeProduct STYLE sync job completed successfully!")
+    # ============================================================================
+    # Step 7: Save Sync Metadata
+    # ============================================================================
+
+    print(f"\n{'='*80}")
+    print("Step 7: Save Sync Metadata")
+    print("=" * 80)
+
+    try:
+        sync_timestamp = datetime.now(timezone.utc).isoformat()
+        spark.sql(f"USE CATALOG {catalog_val}")
+        spark.sql(f"USE SCHEMA {schema_val}")
+        
+        spark.sql(
+            f"""
+            CREATE OR REPLACE TABLE {catalog_val}.{schema_val}.ktb_styles_sync_meta
+            USING DELTA
+            AS SELECT '{sync_timestamp}' AS last_sync_at
+            """
+        )
+        print(f"✅ Metadata saved: {sync_timestamp}")
+    except Exception as e:
+        print(f"⚠️  Could not save metadata: {str(e)}")
+
+# ============================================================================
+# Summary
+# ============================================================================
+
+    print(f"\n{'='*80}")
+    print("SYNC SUMMARY")
+    print("=" * 80)
+
+    print(f"\n✅ Job completed successfully!")
+    print(f"\n   Mode: {refresh_mode_val}")
+    print(f"   Rows synced: {len(rows)}")
+    print(f"   Write mode: {write_mode}")
+    print(f"   Table: {full_table_path}")
+    print(f"   Total rows: {final_count}")
+    print(f"   Timestamp: {sync_timestamp}")
+
+    print(f"\n{'='*80}")
+
+else:
+    # No data to process
+    print(f"\n{'='*80}")
+    print("NO DATA TO SYNC")
+    print("=" * 80)
+    print(f"\n⚠️  Job completed with no data")
+    print(f"\n   API returned: {len(all_styles)} total styles")
+    print(f"   Matched folder '{FOLDER_NAME}': 0 styles")
+    
+    if len(all_styles) > 0:
+        unique_folders = set(s.get("folder", {}).get("name", "?") for s in all_styles if s.get("folder"))
+        print(f"\n   Available folders in your account:")
+        for folder in sorted(unique_folders):
+            print(f"     - {folder}")
+        print(f"\n   Please check:")
+        print(f"     1. Folder name spelling (is it '{FOLDER_NAME}' or something else?)")
+        print(f"     2. Folder name case-sensitivity (should be exactly: {FOLDER_NAME})")
+    else:
+        print(f"\n   Please check:")
+        print(f"     1. BeProduct credentials are valid")
+        print(f"     2. Your account has styles defined")
+    
+    print(f"\n{'='*80}")

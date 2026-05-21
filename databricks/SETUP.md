@@ -230,10 +230,16 @@ databricks jobs create --json @databricks/job_config.json
 3. Monitor the run:
    - Watch the logs in real-time
    - Check for errors in the **"Logs"** tab
+   - **First run will automatically do a FULL refresh** (metadata table doesn't exist yet)
    - Once complete, verify data in the Delta table:
 
      ```sql
      SELECT COUNT(*) FROM main.beproduct.ktb_styles;
+     ```
+   
+   - The sync metadata table is created automatically:
+     ```sql
+     SELECT * FROM main.beproduct.ktb_styles_sync_meta;
      ```
 
 ### Test Incremental Refresh

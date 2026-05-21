@@ -45,6 +45,9 @@ Click **Run now** → wait for completion → check results:
 SELECT COUNT(*) FROM main.beproduct.ktb_styles;
 ```
 
+**Note:** First run will automatically perform a **FULL refresh** (metadata table is created on first run).
+After first run, subsequent runs will use **INCREMENTAL mode** by default.
+
 ---
 
 ## Common Tasks
