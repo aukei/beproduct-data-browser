@@ -407,6 +407,53 @@ else:
         print(f"⚠️  Failed to update local timestamps: {str(e)}")
 
 # ============================================================================
+# Step 6: Log Push Metadata
+# ============================================================================
+
+print(f"\n{'='*80}")
+print("Step 6: Log Push Metadata")
+print("=" * 80)
+
+if not dry_run_val:
+    try:
+        push_timestamp = datetime.now(timezone.utc).isoformat()
+        metadata_table = f"{source_table_name_val}_push_log"
+        
+        spark.sql(f"USE CATALOG {catalog_val}")
+        spark.sql(f"USE SCHEMA {schema_val}")
+        
+        # Build summary
+        summary = f"{pushed_count} styles pushed to BeProduct"
+        if failed_count > 0:
+            summary += f" ({failed_count} failed)"
+        
+        spark.sql(
+            f"""
+            CREATE TABLE IF NOT EXISTS {catalog_val}.{schema_val}.{metadata_table}
+            (pushed_at STRING, records_pushed LONG, records_failed LONG, summary STRING)
+            USING DELTA
+            """
+        )
+        
+        spark.sql(
+            f"""
+            INSERT INTO {catalog_val}.{schema_val}.{metadata_table}
+            SELECT 
+                '{push_timestamp}' AS pushed_at,
+                {pushed_count} AS records_pushed,
+                {failed_count} AS records_failed,
+                '{summary}' AS summary
+            """
+        )
+        print(f"✅ Push log saved to {metadata_table}:")
+        print(f"   Timestamp: {push_timestamp}")
+        print(f"   Pushed: {pushed_count}")
+        print(f"   Failed: {failed_count}")
+        print(f"   Summary: {summary}")
+    except Exception as e:
+        print(f"⚠️  Could not save push log: {str(e)}")
+
+# ============================================================================
 # Summary
 # ============================================================================
 
@@ -423,5 +470,21 @@ else:
     print(f"\n   Records pushed: {pushed_count}")
     print(f"   Records failed: {failed_count}")
     print(f"   Success rate: {100*pushed_count/(pushed_count+failed_count) if (pushed_count+failed_count) > 0 else 0:.1f}%")
+    
+    print(f"\n📜 PUSH HISTORY (last 5 pushes):")
+    try:
+        push_log_table = f"{source_table_name_val}_push_log"
+        history = spark.sql(f"""
+            SELECT pushed_at, records_pushed, records_failed, summary
+            FROM {catalog_val}.{schema_val}.{push_log_table}
+            ORDER BY pushed_at DESC
+            LIMIT 5
+        """).collect()
+        
+        for i, row in enumerate(history, 1):
+            status = "✓" if row['records_failed'] == 0 else "✗"
+            print(f"   {i}. {row['pushed_at'][:10]} {status} | {row['records_pushed']} pushed, {row['records_failed']} failed | {row['summary']}")
+    except Exception as e:
+        print(f"   (Could not retrieve history: {str(e)})")
 
 print(f"\n{'='*80}")

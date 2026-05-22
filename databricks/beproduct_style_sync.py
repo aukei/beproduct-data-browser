@@ -539,14 +539,32 @@ if HAS_DATA:
         spark.sql(f"USE CATALOG {catalog_val}")
         spark.sql(f"USE SCHEMA {schema_val}")
         
+        # Build summary
+        summary = f"{len(rows)} styles synced from folder '{folder_name_val}' (mode: {refresh_mode_val})"
+        
         spark.sql(
             f"""
-            CREATE OR REPLACE TABLE {catalog_val}.{schema_val}.{metadata_table}
+            CREATE TABLE IF NOT EXISTS {catalog_val}.{schema_val}.{metadata_table}
+            (last_sync_at STRING, sync_type STRING, records_synced LONG, summary STRING)
             USING DELTA
-            AS SELECT '{sync_timestamp}' AS last_sync_at
             """
         )
-        print(f"✅ Metadata saved to {metadata_table}: {sync_timestamp}")
+        
+        spark.sql(
+            f"""
+            INSERT INTO {catalog_val}.{schema_val}.{metadata_table}
+            SELECT 
+                '{sync_timestamp}' AS last_sync_at,
+                '{refresh_mode_val}' AS sync_type,
+                {len(rows)} AS records_synced,
+                '{summary}' AS summary
+            """
+        )
+        print(f"✅ Metadata saved to {metadata_table}:")
+        print(f"   Timestamp: {sync_timestamp}")
+        print(f"   Type: {refresh_mode_val}")
+        print(f"   Records: {len(rows)}")
+        print(f"   Summary: {summary}")
     except Exception as e:
         print(f"⚠️  Could not save metadata: {str(e)}")
 
@@ -565,6 +583,21 @@ if HAS_DATA:
     print(f"   Table: {full_table_path}")
     print(f"   Total rows: {final_count}")
     print(f"   Timestamp: {sync_timestamp}")
+    
+    print(f"\n📜 SYNC HISTORY (last 5 syncs):")
+    try:
+        metadata_table = f"{table_name_val}_sync_meta"
+        history = spark.sql(f"""
+            SELECT last_sync_at, sync_type, records_synced, summary
+            FROM {catalog_val}.{schema_val}.{metadata_table}
+            ORDER BY last_sync_at DESC
+            LIMIT 5
+        """).collect()
+        
+        for i, row in enumerate(history, 1):
+            print(f"   {i}. {row['last_sync_at'][:10]} | {row['sync_type']:12} | {row['records_synced']:3} records | {row['summary']}")
+    except Exception as e:
+        print(f"   (Could not retrieve history: {str(e)})")
 
     print(f"\n{'='*80}")
 
