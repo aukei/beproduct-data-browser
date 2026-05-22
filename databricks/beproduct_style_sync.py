@@ -44,7 +44,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from beproduct.sdk import BeProduct
-from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 from pyspark.sql import Row
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -480,13 +480,30 @@ if HAS_DATA:
         
         print(f"   Columns: {len(sorted_cols)}")
         
-        # Create schema
-        fields = [StructField(col, StringType(), True) for col in sorted_cols]
+        # Create schema with proper types for timestamp fields
+        timestamp_cols = {"synced_at", "created_at", "modified_at"}
+        fields = []
+        for col in sorted_cols:
+            if col in timestamp_cols:
+                fields.append(StructField(col, TimestampType(), True))
+            else:
+                fields.append(StructField(col, StringType(), True))
         schema = StructType(fields)
         
-        # Convert to Spark rows
+        # Convert to Spark rows (preserve datetime objects for timestamp fields)
         def row_to_spark_row(row_dict, cols):
-            return Row(**{col: str(row_dict.get(col)) if row_dict.get(col) is not None else None for col in cols})
+            row_data = {}
+            for col in cols:
+                val = row_dict.get(col)
+                if val is None:
+                    row_data[col] = None
+                elif col in timestamp_cols:
+                    # Keep datetime objects as-is for timestamp columns
+                    row_data[col] = val
+                else:
+                    # Convert everything else to string
+                    row_data[col] = str(val)
+            return Row(**row_data)
         
         spark_rows = [row_to_spark_row(row, sorted_cols) for row in rows]
         df = spark.createDataFrame(spark_rows, schema=schema)
