@@ -212,18 +212,12 @@ except Exception as e:
     traceback.print_exc()
     raise
 
-# Exit if no changes
-if not changed_records:
+# Flag for conditional execution
+HAS_CHANGES = len(changed_records) > 0
+
+if not HAS_CHANGES:
     print(f"\n✅ No changes to push")
-    dbutils.notebook.exit(0)
-
-# ============================================================================
-# Step 3: Build Update Payloads
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("Step 3: Build Update Payloads")
-print("=" * 80)
+    print(f"   All records are in sync (modified_at == synced_at)")
 
 def build_update_payload(record: Dict) -> Dict:
     """
@@ -255,203 +249,214 @@ def build_update_payload(record: Dict) -> Dict:
         "fields": fields,
     }
 
-try:
-    print(f"🔨 Building update payloads for {len(changed_records)} records...")
-    
-    payloads = []
-    for record in changed_records:
-        payload = build_update_payload(record)
-        payloads.append(payload)
-    
-    print(f"✅ Built {len(payloads)} payloads")
-    
-    # Show sample payload
-    if payloads:
-        print(f"\n   Sample payload (first record):")
-        sample = payloads[0]
-        print(f"     id: {sample['id'][:16]}...")
-        print(f"     fields: {len(sample['fields'])} fields")
-        for field_name, value in list(sample['fields'].items())[:5]:
-            val_str = str(value)[:60]
-            print(f"       - {field_name}: {val_str}")
+# Initialize counters (will be populated if HAS_CHANGES)
+pushed_count = 0
+failed_count = 0
+failed_records = []
 
-except Exception as e:
-    print(f"❌ Failed to build payloads: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    raise
+if HAS_CHANGES:
 
-# ============================================================================
-# Step 4: Push to BeProduct
-# ============================================================================
+    # ============================================================================
+    # Step 3: Build Update Payloads
+    # ============================================================================
 
-print(f"\n{'='*80}")
-print("Step 4: Push to BeProduct")
-print("=" * 80)
+    print(f"\n{'='*80}")
+    print("Step 3: Build Update Payloads")
+    print("=" * 80)
 
-if dry_run_val:
-    print(f"🔍 DRY RUN MODE - No actual pushes will be made")
-
-try:
-    pushed_count = 0
-    failed_count = 0
-    failed_records = []
-    
-    print(f"\n🚀 Pushing {len(payloads)} records to BeProduct...")
-    
-    for i, payload in enumerate(payloads, 1):
-        style_id = payload["id"]
-        fields = payload["fields"]
-        
-        try:
-            if dry_run_val:
-                # Dry run: just log what would be pushed
-                print(f"  [{i}/{len(payloads)}] DRY RUN: {style_id[:16]}... would push {len(fields)} fields")
-            else:
-                # Real push: call SDK to update
-                print(f"  [{i}/{len(payloads)}] Pushing {style_id[:16]}... ({len(fields)} fields)")
-                
-                api.style.attributes_update(
-                    header_id=style_id,
-                    fields=fields
-                )
-                
-                pushed_count += 1
-                print(f"         ✓ Success")
-        
-        except Exception as e:
-            failed_count += 1
-            failed_records.append({
-                "id": style_id,
-                "error": str(e)
-            })
-            print(f"         ✗ Failed: {str(e)[:100]}")
-    
-    print(f"\n✅ Push complete:")
-    print(f"   Pushed: {pushed_count}")
-    print(f"   Failed: {failed_count}")
-    
-    if failed_records:
-        print(f"\n   Failed records:")
-        for rec in failed_records[:10]:
-            print(f"     - {rec['id'][:16]}...: {rec['error'][:80]}")
-
-except Exception as e:
-    print(f"❌ Push operation failed: {str(e)}")
-    import traceback
-    traceback.print_exc()
-    raise
-
-# ============================================================================
-# Step 5: Update Local synced_at Timestamp
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("Step 5: Update Local synced_at Timestamp")
-print("=" * 80)
-
-if dry_run_val:
-    print(f"🔍 DRY RUN - Skipping local update")
-else:
     try:
-        if pushed_count > 0:
-            source_table_path = f"{catalog_val}.{schema_val}.{source_table_name_val}"
-            current_timestamp = datetime.now(timezone.utc).isoformat()
+        print(f"🔨 Building update payloads for {len(changed_records)} records...")
+        
+        payloads = []
+        for record in changed_records:
+            payload = build_update_payload(record)
+            payloads.append(payload)
+        
+        print(f"✅ Built {len(payloads)} payloads")
+        
+        # Show sample payload
+        if payloads:
+            print(f"\n   Sample payload (first record):")
+            sample = payloads[0]
+            print(f"     id: {sample['id'][:16]}...")
+            print(f"     fields: {len(sample['fields'])} fields")
+            for field_name, value in list(sample['fields'].items())[:5]:
+                val_str = str(value)[:60]
+                print(f"       - {field_name}: {val_str}")
+
+    except Exception as e:
+        print(f"❌ Failed to build payloads: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+    # ============================================================================
+    # Step 4: Push to BeProduct
+    # ============================================================================
+
+    print(f"\n{'='*80}")
+    print("Step 4: Push to BeProduct")
+    print("=" * 80)
+
+    if dry_run_val:
+        print(f"🔍 DRY RUN MODE - No actual pushes will be made")
+
+    try:
+        print(f"\n🚀 Pushing {len(payloads)} records to BeProduct...")
+        
+        for i, payload in enumerate(payloads, 1):
+            style_id = payload["id"]
+            fields = payload["fields"]
             
-            print(f"📝 Updating synced_at for pushed records...")
-            print(f"   New timestamp: {current_timestamp}")
-            
-            # Get list of successfully pushed record IDs
-            pushed_ids = [p["id"] for p in payloads[:pushed_count]]
-            
-            # Update synced_at
-            # Note: This assumes we have write access to the table
-            # If table is read-only, this will fail gracefully
             try:
-                # Create a temporary dataframe with updated timestamps
-                update_df = spark.createDataFrame(
-                    [(id_val, current_timestamp) for id_val in pushed_ids],
-                    ["id", "new_synced_at"]
-                )
-                
-                # Merge back into source table
-                spark.sql(f"USE CATALOG {catalog_val}")
-                
-                # Write to temp location
-                temp_table = f"{source_table_name_val}_temp_update"
-                update_df.write.mode("overwrite").saveAsTable(f"{catalog_val}.{schema_val}.{temp_table}")
-                
-                # Update main table
-                spark.sql(f"""
-                    MERGE INTO {source_table_path} t
-                    USING {catalog_val}.{schema_val}.{temp_table} u
-                    ON t.id = u.id
-                    WHEN MATCHED THEN
-                        UPDATE SET t.synced_at = u.new_synced_at
-                """)
-                
-                # Clean up temp table
-                spark.sql(f"DROP TABLE IF EXISTS {catalog_val}.{schema_val}.{temp_table}")
-                
-                print(f"✅ Updated synced_at for {pushed_count} records")
+                if dry_run_val:
+                    # Dry run: just log what would be pushed
+                    print(f"  [{i}/{len(payloads)}] DRY RUN: {style_id[:16]}... would push {len(fields)} fields")
+                else:
+                    # Real push: call SDK to update
+                    print(f"  [{i}/{len(payloads)}] Pushing {style_id[:16]}... ({len(fields)} fields)")
+                    
+                    api.style.attributes_update(
+                        header_id=style_id,
+                        fields=fields
+                    )
+                    
+                    pushed_count += 1
+                    print(f"         ✓ Success")
             
             except Exception as e:
-                print(f"⚠️  Could not update synced_at in Delta table: {str(e)}")
-                print(f"   Records were pushed to BeProduct but local sync timestamp wasn't updated")
-                print(f"   Please manually update or re-sync to reset modified_at markers")
-
-        else:
-            print(f"⚠️  No records were successfully pushed, skipping local update")
-
-    except Exception as e:
-        print(f"⚠️  Failed to update local timestamps: {str(e)}")
-
-# ============================================================================
-# Step 6: Log Push Metadata
-# ============================================================================
-
-print(f"\n{'='*80}")
-print("Step 6: Log Push Metadata")
-print("=" * 80)
-
-if not dry_run_val:
-    try:
-        push_timestamp = datetime.now(timezone.utc).isoformat()
-        metadata_table = f"{source_table_name_val}_push_log"
+                failed_count += 1
+                failed_records.append({
+                    "id": style_id,
+                    "error": str(e)
+                })
+                print(f"         ✗ Failed: {str(e)[:100]}")
         
-        spark.sql(f"USE CATALOG {catalog_val}")
-        spark.sql(f"USE SCHEMA {schema_val}")
-        
-        # Build summary
-        summary = f"{pushed_count} styles pushed to BeProduct"
-        if failed_count > 0:
-            summary += f" ({failed_count} failed)"
-        
-        spark.sql(
-            f"""
-            CREATE TABLE IF NOT EXISTS {catalog_val}.{schema_val}.{metadata_table}
-            (pushed_at STRING, records_pushed LONG, records_failed LONG, summary STRING)
-            USING DELTA
-            """
-        )
-        
-        spark.sql(
-            f"""
-            INSERT INTO {catalog_val}.{schema_val}.{metadata_table}
-            SELECT 
-                '{push_timestamp}' AS pushed_at,
-                {pushed_count} AS records_pushed,
-                {failed_count} AS records_failed,
-                '{summary}' AS summary
-            """
-        )
-        print(f"✅ Push log saved to {metadata_table}:")
-        print(f"   Timestamp: {push_timestamp}")
+        print(f"\n✅ Push complete:")
         print(f"   Pushed: {pushed_count}")
         print(f"   Failed: {failed_count}")
-        print(f"   Summary: {summary}")
+        
+        if failed_records:
+            print(f"\n   Failed records:")
+            for rec in failed_records[:10]:
+                print(f"     - {rec['id'][:16]}...: {rec['error'][:80]}")
+
     except Exception as e:
-        print(f"⚠️  Could not save push log: {str(e)}")
+        print(f"❌ Push operation failed: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+    # ============================================================================
+    # Step 5: Update Local synced_at Timestamp
+    # ============================================================================
+
+    print(f"\n{'='*80}")
+    print("Step 5: Update Local synced_at Timestamp")
+    print("=" * 80)
+
+    if dry_run_val:
+        print(f"🔍 DRY RUN - Skipping local update")
+    else:
+        try:
+            if pushed_count > 0:
+                source_table_path = f"{catalog_val}.{schema_val}.{source_table_name_val}"
+                current_timestamp = datetime.now(timezone.utc).isoformat()
+                
+                print(f"📝 Updating synced_at for pushed records...")
+                print(f"   New timestamp: {current_timestamp}")
+                
+                # Get list of successfully pushed record IDs
+                pushed_ids = [p["id"] for p in payloads[:pushed_count]]
+                
+                # Update synced_at
+                # Note: This assumes we have write access to the table
+                # If table is read-only, this will fail gracefully
+                try:
+                    # Create a temporary dataframe with updated timestamps
+                    update_df = spark.createDataFrame(
+                        [(id_val, current_timestamp) for id_val in pushed_ids],
+                        ["id", "new_synced_at"]
+                    )
+                    
+                    # Merge back into source table
+                    spark.sql(f"USE CATALOG {catalog_val}")
+                    
+                    # Write to temp location
+                    temp_table = f"{source_table_name_val}_temp_update"
+                    update_df.write.mode("overwrite").saveAsTable(f"{catalog_val}.{schema_val}.{temp_table}")
+                    
+                    # Update main table
+                    spark.sql(f"""
+                        MERGE INTO {source_table_path} t
+                        USING {catalog_val}.{schema_val}.{temp_table} u
+                        ON t.id = u.id
+                        WHEN MATCHED THEN
+                            UPDATE SET t.synced_at = u.new_synced_at
+                    """)
+                
+                    # Clean up temp table
+                    spark.sql(f"DROP TABLE IF EXISTS {catalog_val}.{schema_val}.{temp_table}")
+                    
+                    print(f"✅ Updated synced_at for {pushed_count} records")
+                
+                except Exception as e:
+                    print(f"⚠️  Could not update synced_at in Delta table: {str(e)}")
+                    print(f"   Records were pushed to BeProduct but local sync timestamp wasn't updated")
+                    print(f"   Please manually update or re-sync to reset modified_at markers")
+
+            else:
+                print(f"⚠️  No records were successfully pushed, skipping local update")
+
+        except Exception as e:
+            print(f"⚠️  Failed to update local timestamps: {str(e)}")
+
+    # ============================================================================
+    # Step 6: Log Push Metadata
+    # ============================================================================
+
+    print(f"\n{'='*80}")
+    print("Step 6: Log Push Metadata")
+    print("=" * 80)
+
+    if not dry_run_val:
+        try:
+            push_timestamp = datetime.now(timezone.utc).isoformat()
+            metadata_table = f"{source_table_name_val}_push_log"
+            
+            spark.sql(f"USE CATALOG {catalog_val}")
+            spark.sql(f"USE SCHEMA {schema_val}")
+            
+            # Build summary
+            summary = f"{pushed_count} styles pushed to BeProduct"
+            if failed_count > 0:
+                summary += f" ({failed_count} failed)"
+            
+            spark.sql(
+                f"""
+                CREATE TABLE IF NOT EXISTS {catalog_val}.{schema_val}.{metadata_table}
+                (pushed_at STRING, records_pushed LONG, records_failed LONG, summary STRING)
+                USING DELTA
+                """
+            )
+            
+            spark.sql(
+                f"""
+                INSERT INTO {catalog_val}.{schema_val}.{metadata_table}
+                SELECT 
+                    '{push_timestamp}' AS pushed_at,
+                    {pushed_count} AS records_pushed,
+                    {failed_count} AS records_failed,
+                    '{summary}' AS summary
+                """
+            )
+            print(f"✅ Push log saved to {metadata_table}:")
+            print(f"   Timestamp: {push_timestamp}")
+            print(f"   Pushed: {pushed_count}")
+            print(f"   Failed: {failed_count}")
+            print(f"   Summary: {summary}")
+        except Exception as e:
+            print(f"⚠️  Could not save push log: {str(e)}")
 
 # ============================================================================
 # Summary
@@ -462,28 +467,54 @@ print("PUSH SUMMARY")
 print("=" * 80)
 
 print(f"\n✅ Push job complete!")
-if dry_run_val:
-    print(f"\n   Mode: DRY RUN (no actual pushes)")
-    print(f"   Records that would be pushed: {len(payloads)}")
-    print(f"   \n   Re-run with dry_run=false to actually push")
+
+if HAS_CHANGES:
+    if dry_run_val:
+        print(f"\n   Mode: DRY RUN (no actual pushes)")
+        print(f"   Records that would be pushed: {len(payloads)}")
+        print(f"   \n   Re-run with dry_run=false to actually push")
+    else:
+        print(f"\n   Records pushed: {pushed_count}")
+        print(f"   Records failed: {failed_count}")
+        print(f"   Success rate: {100*pushed_count/(pushed_count+failed_count) if (pushed_count+failed_count) > 0 else 0:.1f}%")
+        
+        print(f"\n📜 PUSH HISTORY (last 5 pushes):")
+        try:
+            push_log_table = f"{source_table_name_val}_push_log"
+            history = spark.sql(f"""
+                SELECT pushed_at, records_pushed, records_failed, summary
+                FROM {catalog_val}.{schema_val}.{push_log_table}
+                ORDER BY pushed_at DESC
+                LIMIT 5
+            """).collect()
+            
+            for i, row in enumerate(history, 1):
+                status = "✓" if row['records_failed'] == 0 else "✗"
+                print(f"   {i}. {row['pushed_at'][:10]} {status} | {row['records_pushed']} pushed, {row['records_failed']} failed | {row['summary']}")
+        except Exception as e:
+            print(f"   (Could not retrieve history: {str(e)})")
+
 else:
-    print(f"\n   Records pushed: {pushed_count}")
-    print(f"   Records failed: {failed_count}")
-    print(f"   Success rate: {100*pushed_count/(pushed_count+failed_count) if (pushed_count+failed_count) > 0 else 0:.1f}%")
+    print(f"\n   No changes detected")
+    print(f"   All records are in sync (modified_at == synced_at)")
     
-    print(f"\n📜 PUSH HISTORY (last 5 pushes):")
+    print(f"\n📜 LAST PUSH (from history):")
     try:
         push_log_table = f"{source_table_name_val}_push_log"
-        history = spark.sql(f"""
+        last_push = spark.sql(f"""
             SELECT pushed_at, records_pushed, records_failed, summary
             FROM {catalog_val}.{schema_val}.{push_log_table}
             ORDER BY pushed_at DESC
-            LIMIT 5
+            LIMIT 1
         """).collect()
         
-        for i, row in enumerate(history, 1):
-            status = "✓" if row['records_failed'] == 0 else "✗"
-            print(f"   {i}. {row['pushed_at'][:10]} {status} | {row['records_pushed']} pushed, {row['records_failed']} failed | {row['summary']}")
+        if last_push:
+            row = last_push[0]
+            print(f"   Last push: {row['pushed_at']}")
+            print(f"   Records: {row['records_pushed']} pushed, {row['records_failed']} failed")
+            print(f"   Summary: {row['summary']}")
+        else:
+            print(f"   No previous push history found (first run)")
     except Exception as e:
         print(f"   (Could not retrieve history: {str(e)})")
 
