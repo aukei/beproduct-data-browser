@@ -163,8 +163,14 @@ print(f"\n{'='*80}")
 print("Step 2: Check Sync Metadata")
 print("=" * 80)
 
-def get_last_sync_timestamp() -> Optional[str]:
-    """Get last sync timestamp for incremental refresh."""
+def get_last_sync_timestamp(table_name: str) -> Optional[str]:
+    """Get last sync timestamp for incremental refresh.
+    
+    Each table has its own metadata table: {table_name}_sync_meta
+    This allows different streams (folders/entities) to track sync independently.
+    """
+    metadata_table = f"{table_name}_sync_meta"
+    
     try:
         spark.sql(f"USE CATALOG {catalog_val}")
         spark.sql(f"USE SCHEMA {schema_val}")
@@ -173,21 +179,24 @@ def get_last_sync_timestamp() -> Optional[str]:
             f"SELECT table_name FROM information_schema.tables "
             f"WHERE table_catalog = '{catalog_val}' "
             f"  AND table_schema = '{schema_val}' "
-            f"  AND table_name = 'ktb_styles_sync_meta'"
+            f"  AND table_name = '{metadata_table}'"
         ).collect()
         
         if not tables:
+            logger.info(f"Metadata table {metadata_table} does not exist (first run)")
             return None
         
         result = spark.sql(
-            f"SELECT last_sync_at FROM {catalog_val}.{schema_val}.ktb_styles_sync_meta LIMIT 1"
+            f"SELECT last_sync_at FROM {catalog_val}.{schema_val}.{metadata_table} LIMIT 1"
         ).collect()
         
         if result:
-            return result[0]["last_sync_at"]
+            timestamp = result[0]["last_sync_at"]
+            logger.info(f"Last sync for {metadata_table}: {timestamp}")
+            return timestamp
         return None
     except Exception as e:
-        logger.warning(f"Could not retrieve metadata: {str(e)}")
+        logger.warning(f"Could not retrieve metadata from {metadata_table}: {str(e)}")
         return None
 
 if refresh_mode_val == "FULL":
@@ -195,7 +204,7 @@ if refresh_mode_val == "FULL":
     since_iso = None
 else:
     print("🔄 INCREMENTAL REFRESH mode")
-    since_iso = get_last_sync_timestamp()
+    since_iso = get_last_sync_timestamp(table_name_val)
     if since_iso:
         print(f"   Last sync: {since_iso}")
     else:
@@ -525,17 +534,19 @@ if HAS_DATA:
 
     try:
         sync_timestamp = datetime.now(timezone.utc).isoformat()
+        metadata_table = f"{table_name_val}_sync_meta"
+        
         spark.sql(f"USE CATALOG {catalog_val}")
         spark.sql(f"USE SCHEMA {schema_val}")
         
         spark.sql(
             f"""
-            CREATE OR REPLACE TABLE {catalog_val}.{schema_val}.ktb_styles_sync_meta
+            CREATE OR REPLACE TABLE {catalog_val}.{schema_val}.{metadata_table}
             USING DELTA
             AS SELECT '{sync_timestamp}' AS last_sync_at
             """
         )
-        print(f"✅ Metadata saved: {sync_timestamp}")
+        print(f"✅ Metadata saved to {metadata_table}: {sync_timestamp}")
     except Exception as e:
         print(f"⚠️  Could not save metadata: {str(e)}")
 

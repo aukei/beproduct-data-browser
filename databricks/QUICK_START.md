@@ -65,8 +65,16 @@ databricks jobs run-now --job-id <JOB_ID> \
 
 ### Check Last Sync Time
 
+Each table has its own metadata table:
+
 ```sql
+-- KTB styles
 SELECT * FROM main.beproduct.ktb_styles_sync_meta;
+
+-- WMT styles (or any other table)
+SELECT * FROM main.beproduct.wmt_styles_sync_meta;
+
+-- Pattern: {table_name}_sync_meta
 ```
 
 ### View Styles from Today

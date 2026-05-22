@@ -263,19 +263,40 @@ LIMIT 5;
 ### Sync Status
 
 ```sql
--- When was the last sync?
+-- When was the last sync for each table?
 SELECT
+    'ktb_styles' as table_name,
     last_sync_at,
     DATEDIFF(CURRENT_TIMESTAMP(), last_sync_at) as hours_ago
-FROM main.beproduct.ktb_styles_sync_meta;
+FROM main.beproduct.ktb_styles_sync_meta
 
--- How fresh is our data?
+UNION ALL
+
+SELECT
+    'wmt_styles' as table_name,
+    last_sync_at,
+    DATEDIFF(CURRENT_TIMESTAMP(), last_sync_at) as hours_ago
+FROM main.beproduct.wmt_styles_sync_meta;
+
+-- How fresh is our KTB styles data?
 SELECT
     MAX(synced_at) as last_sync,
     MIN(modified_at) as oldest_change,
     MAX(modified_at) as newest_change,
     DATEDIFF(CURRENT_TIMESTAMP(), MAX(synced_at)) as sync_age_hours
 FROM main.beproduct.ktb_styles;
+
+-- Compare sync metadata across different tables
+SELECT
+    table_name,
+    last_sync_at,
+    CAST(last_sync_at AS DATE) as sync_date
+FROM (
+    SELECT 'ktb_styles' as table_name, last_sync_at FROM main.beproduct.ktb_styles_sync_meta
+    UNION ALL
+    SELECT 'wmt_styles' as table_name, last_sync_at FROM main.beproduct.wmt_styles_sync_meta
+)
+ORDER BY table_name, last_sync_at DESC;
 ```
 
 ### Job Performance

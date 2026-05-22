@@ -416,19 +416,29 @@ Or via UI:
 
 ### Check Sync Metadata
 
-The job maintains a metadata table for incremental sync state:
+Each table has its own metadata table for independent incremental sync tracking:
 
 ```sql
+-- For KTB styles
 SELECT * FROM main.beproduct.ktb_styles_sync_meta;
+
+-- For WMT styles
+SELECT * FROM main.beproduct.wmt_styles_sync_meta;
+
+-- Pattern: {table_name}_sync_meta
+SELECT * FROM main.beproduct.{table_name}_sync_meta;
 ```
 
-To force a full refresh, delete this metadata:
+To force a full refresh for a specific table, delete its metadata:
 
 ```sql
+-- Delete metadata for KTB styles
 DROP TABLE IF EXISTS main.beproduct.ktb_styles_sync_meta;
+
+-- Then run the job with refresh_mode=FULL
 ```
 
-Then run the job with `refresh_mode=FULL`.
+**Note:** Each stream (folder + entity combination) maintains separate metadata, so syncing KTB styles and WMT styles won't interfere with each other's incremental sync tracking.
 
 ---
 
