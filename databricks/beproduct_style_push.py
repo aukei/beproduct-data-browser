@@ -481,16 +481,28 @@ if HAS_CHANGES:
         print(f"\n📜 PUSH HISTORY (last 5 pushes):")
         try:
             push_log_table = f"{source_table_name_val}_push_log"
-            history = spark.sql(f"""
-                SELECT pushed_at, records_pushed, records_failed, summary
-                FROM {catalog_val}.{schema_val}.{push_log_table}
-                ORDER BY pushed_at DESC
-                LIMIT 5
-            """).collect()
             
-            for i, row in enumerate(history, 1):
-                status = "✓" if row['records_failed'] == 0 else "✗"
-                print(f"   {i}. {row['pushed_at'][:10]} {status} | {row['records_pushed']} pushed, {row['records_failed']} failed | {row['summary']}")
+            # Check if table exists before querying
+            table_exists = spark.sql(f"""
+                SELECT 1 FROM information_schema.tables 
+                WHERE table_catalog = '{catalog_val}'
+                AND table_schema = '{schema_val}'
+                AND table_name = '{push_log_table}'
+            """).count() > 0
+            
+            if table_exists:
+                history = spark.sql(f"""
+                    SELECT pushed_at, records_pushed, records_failed, summary
+                    FROM {catalog_val}.{schema_val}.{push_log_table}
+                    ORDER BY pushed_at DESC
+                    LIMIT 5
+                """).collect()
+                
+                for i, row in enumerate(history, 1):
+                    status = "✓" if row['records_failed'] == 0 else "✗"
+                    print(f"   {i}. {row['pushed_at'][:10]} {status} | {row['records_pushed']} pushed, {row['records_failed']} failed | {row['summary']}")
+            else:
+                print(f"   No push history available (first run)")
         except Exception as e:
             print(f"   (Could not retrieve history: {str(e)})")
 
@@ -501,20 +513,32 @@ else:
     print(f"\n📜 LAST PUSH (from history):")
     try:
         push_log_table = f"{source_table_name_val}_push_log"
-        last_push = spark.sql(f"""
-            SELECT pushed_at, records_pushed, records_failed, summary
-            FROM {catalog_val}.{schema_val}.{push_log_table}
-            ORDER BY pushed_at DESC
-            LIMIT 1
-        """).collect()
         
-        if last_push:
-            row = last_push[0]
-            print(f"   Last push: {row['pushed_at']}")
-            print(f"   Records: {row['records_pushed']} pushed, {row['records_failed']} failed")
-            print(f"   Summary: {row['summary']}")
+        # Check if table exists before querying
+        table_exists = spark.sql(f"""
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_catalog = '{catalog_val}'
+            AND table_schema = '{schema_val}'
+            AND table_name = '{push_log_table}'
+        """).count() > 0
+        
+        if table_exists:
+            last_push = spark.sql(f"""
+                SELECT pushed_at, records_pushed, records_failed, summary
+                FROM {catalog_val}.{schema_val}.{push_log_table}
+                ORDER BY pushed_at DESC
+                LIMIT 1
+            """).collect()
+            
+            if last_push:
+                row = last_push[0]
+                print(f"   Last push: {row['pushed_at']}")
+                print(f"   Records: {row['records_pushed']} pushed, {row['records_failed']} failed")
+                print(f"   Summary: {row['summary']}")
+            else:
+                print(f"   No previous push history found (first run)")
         else:
-            print(f"   No previous push history found (first run)")
+            print(f"   No push history available (first run)")
     except Exception as e:
         print(f"   (Could not retrieve history: {str(e)})")
 

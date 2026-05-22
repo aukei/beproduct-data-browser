@@ -405,13 +405,25 @@ if HAS_DATA:
         row = {
             "id": record.get("id"),
             "folder_name": folder_name,
-            "synced_at": datetime.now(timezone.utc).isoformat(),
+            "synced_at": datetime.now(timezone.utc),  # Keep as datetime object, not string
         }
         
+        # Parse ISO 8601 strings to datetime objects for proper TIMESTAMP storage
         if "createdAt" in record:
-            row["created_at"] = record["createdAt"]
+            try:
+                # Parse ISO 8601 string to datetime
+                created_str = record["createdAt"]
+                row["created_at"] = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
+            except:
+                row["created_at"] = None
+        
         if "modifiedAt" in record:
-            row["modified_at"] = record["modifiedAt"]
+            try:
+                # Parse ISO 8601 string to datetime
+                modified_str = record["modifiedAt"]
+                row["modified_at"] = datetime.fromisoformat(modified_str.replace('Z', '+00:00'))
+            except:
+                row["modified_at"] = None
         
         # Extract attributes from headerData.fields (list of field objects)
         # Each field has: {id, name, value, type, required, ...}
@@ -540,7 +552,7 @@ if HAS_DATA:
         spark.sql(f"USE SCHEMA {schema_val}")
         
         # Build summary
-        summary = f"{len(rows)} styles synced from folder '{folder_name_val}' (mode: {refresh_mode_val})"
+        summary = f'{len(rows)} styles synced from folder "{folder_name_val}" (mode: {refresh_mode_val})'
         
         spark.sql(
             f"""
