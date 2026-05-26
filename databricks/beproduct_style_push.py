@@ -223,11 +223,54 @@ def build_update_payload(record: Dict) -> Dict:
     """
     Build BeProduct API update payload from Databricks record.
     
+    Uses field IDs (not field names) by extracting the mapping from data_json.
     Returns dict with 'id' and 'fields' for the SDK's attributes_update() method.
     """
     style_id = record.get("id")
     
-    # Build fields dict: BeProduct field names → values
+    # Extract field ID mapping from data_json
+    # Maps: BeProduct field name → field ID
+    field_name_to_id = {}
+    try:
+        data_json_str = record.get("data_json")
+        if isinstance(data_json_str, str):
+            data_json = json.loads(data_json_str)
+        else:
+            data_json = data_json_str
+        
+        # Extract field mappings from headerData.fields
+        header_data = data_json.get("headerData", {})
+        fields_list = header_data.get("fields", [])
+        
+        for field_obj in fields_list:
+            field_name = field_obj.get("name")
+            field_id = field_obj.get("id")
+            if field_name and field_id:
+                field_name_to_id[field_name] = field_id
+    except Exception as e:
+        logger.warning(f"Failed to extract field mapping from data_json: {str(e)}")
+    
+    # Build fields dict: use field IDs (not names)
+    # Also identify field types for validation
+    field_id_to_type = {}
+    try:
+        data_json_str = record.get("data_json")
+        if isinstance(data_json_str, str):
+            data_json = json.loads(data_json_str)
+        else:
+            data_json = data_json_str
+        
+        header_data = data_json.get("headerData", {})
+        fields_list = header_data.get("fields", [])
+        
+        for field_obj in fields_list:
+            field_id = field_obj.get("id")
+            field_type = field_obj.get("type")
+            if field_id:
+                field_id_to_type[field_id] = field_type
+    except:
+        pass
+    
     fields = {}
     
     for col_name, bp_field_name in COLUMN_TO_FIELD.items():
@@ -240,9 +283,18 @@ def build_update_payload(record: Dict) -> Dict:
             except:
                 pass
         
-        # Only include non-None values
-        if value is not None:
-            fields[bp_field_name] = value
+        # Only include non-None and non-empty values
+        # Skip empty strings on dropdown/multiselect fields (they get rejected silently)
+        if value is not None and value != "":
+            # Use field ID if available, fallback to field name
+            field_id = field_name_to_id.get(bp_field_name, bp_field_name)
+            
+            # Log warning if sending to dropdown/multiselect with potentially invalid value
+            field_type = field_id_to_type.get(field_id, "")
+            if field_type in ["DropDown", "MultiSelect"] and isinstance(value, str):
+                logger.warning(f"Field {field_id} ({bp_field_name}) is {field_type} type - ensure value '{value}' is in valid Master Data list")
+            
+            fields[field_id] = value
     
     return {
         "id": style_id,
@@ -276,15 +328,16 @@ if HAS_CHANGES:
         
         print(f"✅ Built {len(payloads)} payloads")
         
-        # Show sample payload
+        # Show sample payload (all fields, not just first 5)
         if payloads:
             print(f"\n   Sample payload (first record):")
             sample = payloads[0]
-            print(f"     id: {sample['id'][:16]}...")
-            print(f"     fields: {len(sample['fields'])} fields")
-            for field_name, value in list(sample['fields'].items())[:5]:
+            print(f"     id: {sample['id']}")
+            print(f"     fields to update: {len(sample['fields'])}")
+            print(f"     Using field IDs (extracted from data_json):")
+            for field_id, value in sample['fields'].items():
                 val_str = str(value)[:60]
-                print(f"       - {field_name}: {val_str}")
+                print(f"       - {field_id}: {val_str}")
 
     except Exception as e:
         print(f"❌ Failed to build payloads: {str(e)}")
@@ -314,17 +367,19 @@ if HAS_CHANGES:
                 if dry_run_val:
                     # Dry run: just log what would be pushed
                     print(f"  [{i}/{len(payloads)}] DRY RUN: {style_id[:16]}... would push {len(fields)} fields")
+                    print(f"         Fields: {fields}")
                 else:
                     # Real push: call SDK to update
                     print(f"  [{i}/{len(payloads)}] Pushing {style_id[:16]}... ({len(fields)} fields)")
+                    print(f"         Fields: {fields}")
                     
-                    api.style.attributes_update(
+                    response = api.style.attributes_update(
                         header_id=style_id,
                         fields=fields
                     )
                     
                     pushed_count += 1
-                    print(f"         ✓ Success")
+                    print(f"         ✓ Success - API response: {response}")
             
             except Exception as e:
                 failed_count += 1

@@ -265,6 +265,37 @@ LIMIT 20;
 2. Update field mapping in the push notebook
 3. Retry
 
+#### Issue: Dropdown field updated but value not reflected in BeProduct
+
+**Cause:** The field is a dropdown/multiselect with predefined Master Data values. Invalid values are silently rejected.
+
+**Affected fields:**
+- BRANDS (MultiSelect)
+- PRODUCT STATUS (DropDown)
+- TEAM (DropDown)
+- SEASON (DropDown)
+- YEAR (DropDown)
+- PRODUCT CATEGORY (DropDown)
+- PRODUCT SUB CATEGORY (DropDown)
+- TECHPACK STAGE (DropDown)
+- DIVISION (DropDown)
+- Others with Master Data constraints
+
+**Solution:**
+1. **For BRANDS:** Use exact brand names that exist in Master Data (e.g., "Nike", "Adidas")
+2. **For other dropdowns:** Use only values that appear in the original BeProduct data
+3. **Verify values:** Run:
+   ```sql
+   SELECT DISTINCT brands FROM main.beproduct.ktb_styles WHERE brands IS NOT NULL LIMIT 10;
+   SELECT DISTINCT product_status FROM main.beproduct.ktb_styles WHERE product_status IS NOT NULL LIMIT 10;
+   ```
+4. **Check logs:** The push job logs warnings for dropdown fields:
+   ```
+   WARNING: Field team (TEAM) is DropDown type - ensure value 'INVALID_VALUE' is in valid Master Data list
+   ```
+
+**Why this happens:** BeProduct validates dropdown values against Master Data. If the value isn't in the list, it silently rejects the update.
+
 #### Issue: Some records fail to push, others succeed
 
 **Expected behavior** - Job continues and logs failures
@@ -383,6 +414,34 @@ A: Yes! Add a schedule to the job (e.g., hourly). It will push any changes that 
 A: Either:
 1. Re-update the fields in BeProduct manually, or
 2. Set `modified_at < synced_at` for the affected records in Databricks, pull fresh data with the pull job
+
+**Q: Why did my dropdown field value not get pushed?**
+
+A: Dropdown and MultiSelect fields (BRANDS, TEAM, SEASON, etc.) require values from BeProduct's Master Data. If you set a value that's not in the list, BeProduct silently rejects it.
+
+Solution: Only use values that exist in the original data pulled from BeProduct. Check the pull logs or query the table to see valid values:
+```sql
+SELECT DISTINCT brands FROM main.beproduct.ktb_styles 
+WHERE brands IS NOT NULL 
+ORDER BY brands;
+```
+
+**Q: How can I find all valid values for a dropdown field?**
+
+A: After pulling fresh data, query the table:
+```sql
+-- Find all valid BRANDS values from pulled data
+SELECT DISTINCT brands FROM main.beproduct.ktb_styles 
+WHERE brands IS NOT NULL 
+ORDER BY brands;
+
+-- Find all valid TEAM values
+SELECT DISTINCT team FROM main.beproduct.ktb_styles 
+WHERE team IS NOT NULL 
+ORDER BY team;
+```
+
+These represent the valid Master Data values for those fields.
 
 ---
 
