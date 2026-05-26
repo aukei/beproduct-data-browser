@@ -198,13 +198,13 @@ try:
     print(f"✅ Query complete:")
     print(f"   Total records with changes: {len(changed_records)}")
     
-     if len(changed_records) > 0:
-         print(f"\n   Sample changed records:")
-         for i, rec in enumerate(changed_records[:5]):
-             style_num = rec["lf_style_number"] if rec["lf_style_number"] is not None else "?"
-             modified = rec["modified_at"] if rec["modified_at"] is not None else "?"
-             synced = rec["synced_at"] if rec["synced_at"] is not None else "?"
-             print(f"     {i+1}. {style_num}: modified={modified}, last_synced={synced}")
+    if len(changed_records) > 0:
+        print(f"\n   Sample changed records:")
+        for i, rec in enumerate(changed_records[:5]):
+            style_num = rec["lf_style_number"] if rec["lf_style_number"] is not None else "?"
+            modified = rec["modified_at"] if rec["modified_at"] is not None else "?"
+            synced = rec["synced_at"] if rec["synced_at"] is not None else "?"
+            print(f"     {i+1}. {style_num}: modified={modified}, last_synced={synced}")
 
 except Exception as e:
     print(f"❌ Failed to query changes: {str(e)}")
@@ -265,14 +265,14 @@ if HAS_CHANGES:
     print("=" * 80)
 
     try:
-         print(f"🔨 Building update payloads for {len(changed_records)} records...")
-         
-         payloads = []
-         for record in changed_records:
-             # Convert Row object to dictionary
-             record_dict = record.asDict()
-             payload = build_update_payload(record_dict)
-             payloads.append(payload)
+        print(f"🔨 Building update payloads for {len(changed_records)} records...")
+        
+        payloads = []
+        for record in changed_records:
+            # Convert Row object to dictionary
+            record_dict = record.asDict()
+            payload = build_update_payload(record_dict)
+            payloads.append(payload)
         
         print(f"✅ Built {len(payloads)} payloads")
         
