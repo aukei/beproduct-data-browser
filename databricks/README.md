@@ -1,404 +1,302 @@
-# Databricks ETL Pipeline for BeProduct
+# Databricks Notebooks: BeProduct Sync Pipeline
 
-Complete bidirectional ETL pipeline to sync BeProduct PLM data with Azure Databricks Delta tables.
+Standalone Databricks notebooks for syncing BeProduct STYLE master data with Delta Lake tables, including support for bidirectional changes with audit trails.
 
-## Quick Start
-
-```bash
-# 1. Create secret scope
-databricks secrets create-scope --scope beproduct
-
-# 2. Add credentials
-databricks secrets put --scope beproduct --key client_id --string-value "..."
-databricks secrets put --scope beproduct --key client_secret --string-value "..."
-databricks secrets put --scope beproduct --key refresh_token --string-value "..."
-databricks secrets put --scope beproduct --key company_domain --string-value "..."
-
-# 3. Upload notebooks
-databricks workspace import-dir notebooks/inbound /Workspace/beproduct/notebooks/inbound
-databricks workspace import-dir notebooks/outbound /Workspace/beproduct/notebooks/outbound
-
-# 4. See DATABRICKS_SETUP.md for complete deployment guide
-```
-
-## Directory Structure
+## Architecture
 
 ```
-databricks/
-├── README.md                          # This file
-├── DATABRICKS_SETUP.md                # Complete deployment guide
-├── notebooks/
-│   ├── inbound/                       # Download BeProduct → Databricks (8 jobs)
-│   │   ├── beproduct_api_utils.py     # Shared: OAuth, API client, normalization
-│   │   ├── 01_sync_styles.py          # Sync Styles
-│   │   ├── 02_sync_materials.py       # Sync Materials
-│   │   ├── 03_sync_colors.py          # Sync Color Palettes
-│   │   ├── 04_sync_images.py          # Sync Images
-│   │   ├── 05_sync_blocks.py          # Sync Blocks
-│   │   ├── 06_sync_directory.py       # Sync Directory (vendors, factories, etc.)
-│   │   ├── 07_sync_users.py           # Sync Users
-│   │   └── 08_sync_data_tables.py     # Sync Custom DataTables
-│   │
-│   └── outbound/                      # Push Databricks → BeProduct (7 jobs, on-demand)
-│       ├── beproduct_push_utils.py    # Shared: merge logic, conflict detection, audit logging
-│       ├── 01_push_styles.py          # Push modified styles
-│       ├── 02_push_materials.py       # Push modified materials
-│       ├── 03_push_colors.py          # Push modified colors
-│       ├── 04_push_images.py          # Push modified images
-│       ├── 05_push_blocks.py          # Push modified blocks
-│       ├── 06_push_directory.py       # Push modified directory (upsert)
-│       └── 07_push_data_table_rows.py # Push modified data table rows
-│
-├── jobs/
-│   ├── inbound/
-│   │   └── sync_jobs.yaml             # Job definitions for all 8 inbound jobs
-│   │
-│   └── outbound/
-│       └── push_jobs.yaml             # Job definitions for all 7 outbound jobs (on-demand)
-│
-└── config/
-    └── [future: parameters, cluster configs]
+STYLE SYNC (Pull)
+  └─ Daily at 7pm HKT (11am UTC)
+     └─ Syncs STYLE records from BeProduct to Delta
+     └─ Supports FULL and INCREMENTAL refresh modes
+     └─ Extracts 16 key fields; stores full JSON for audit
+
+MASTER DATA SYNC
+  └─ Daily (before push operations)
+     └─ Pulls dropdown reference values from BeProduct API
+     └─ Creates validation tables for field values
+
+STYLE PUSH (Pull)
+  └─ Manual trigger or hourly
+     └─ Detects changes via timestamp comparison
+     └─ Pushes modified STYLE records back to BeProduct
+     └─ Dry-run mode by default
+     └─ Audit trail for all push operations
 ```
 
 ## Notebooks
 
-### Inbound Sync Notebooks
+### 1. STYLE Pull: `beproduct_style_sync.py`
 
-All inbound notebooks fetch data from BeProduct API and write to Databricks Delta tables. They support:
-- ✅ Incremental sync (only fetch records modified since last run)
-- ✅ Pagination (handles APIs with 1000+ records)
-- ✅ Batch writes (configurable batch size, default 1000)
-- ✅ Error recovery (automatic retries with exponential backoff)
-- ✅ Rate limit handling (respects BeProduct API rate limits)
+**Purpose:** Fetch STYLE records from BeProduct and store in Delta Lake.
 
-| Notebook | Source | Target | Incremental | Notes |
-|----------|--------|--------|-------------|-------|
-| 01_sync_styles.py | Style/List | bp_styles | Yes | Includes colorway + size range counts |
-| 02_sync_materials.py | Material/List | bp_materials | Yes | Similar to Styles |
-| 03_sync_colors.py | Color/List | bp_colors | Yes | Handles colorPaletteNumber quirk |
-| 04_sync_images.py | Image/List | bp_images | Yes | Store metadata + thumbnail URL |
-| 05_sync_blocks.py | Block/List | bp_blocks | Yes | Track size class count |
-| 06_sync_directory.py | Directory/List | bp_directory | No* | Full refresh each run |
-| 07_sync_users.py | User/List | bp_users | No* | Full refresh each run |
-| 08_sync_data_tables.py | DataTable/List | bp_data_table_* | No | Creates one table per data table definition |
+**Schedule:** Daily at 7pm HKT (11am UTC)
 
-*No incremental support for Directory and Users (not supported by API)
+**Parameters:**
+- `folder_name` - BeProduct folder name (default: `KTB`, supports: `KTB`, `WMT`, `WALMART`, etc.)
+- `refresh_mode` - `FULL` (all records) or `INCREMENTAL` (only modified) (default: `INCREMENTAL`)
+- `catalog` - Target Databricks catalog (default: `lft`)
+- `schema` - Target Databricks schema (default: `beproduct`)
+- `table_name` - Delta table name (default: `ktb_styles`)
 
-#### Inbound Execution Order (Every 6 Hours)
+**Extracted Fields (16 key fields):**
 
-```
-00:00 → Styles, Materials (parallel)
-00:30 → Colors, Images (parallel)
-01:00 → Blocks
-01:30 → Directory
-02:00 → Users
-02:30 → DataTables
-```
+**Compulsory:**
+- LF Style Number
+- Description
+- Team
+- Season
+- Year
 
-Staggered by 30 min to avoid API thundering herd.
+**Interested:**
+- Product Status
+- Customer Style Number
+- Product Category
+- Product Sub Category
+- Division
+- Brands
+- Garment Finish
+- Techpack Stage
+- Lot Code
+- Parent Vendor
+- Factory
 
-### Outbound Push Notebooks
-
-All outbound notebooks (on-demand, no schedule) push modified records from Databricks back to BeProduct. They:
-- ✅ Fetch latest from BeProduct API (before pushing)
-- ✅ Detect conflicts (compare modified_at timestamps)
-- ✅ Merge safely (local_wins strategy configured)
-- ✅ Log all operations (bp_audit_log table)
-- ✅ Dry-run mode (default, no actual API calls)
-
-| Notebook | Target | Conflict Strategy | Merge Logic | Notes |
-|----------|--------|-------------------|-------------|-------|
-| 01_push_styles.py | Style/Update | local_wins | Databricks version overwrites | Dry-run by default |
-| 02_push_materials.py | Material/Update | local_wins | Databricks version overwrites | Dry-run by default |
-| 03_push_colors.py | Color/Update | local_wins | Databricks version overwrites | Dry-run by default |
-| 04_push_images.py | Image/Update | local_wins | Databricks version overwrites | Dry-run by default |
-| 05_push_blocks.py | Block/Update | local_wins | Databricks version overwrites | Dry-run by default |
-| 06_push_directory.py | Directory/Add | local_wins | Upsert (no delete via API) | Dry-run by default |
-| 07_push_data_table_rows.py | DataTable/Update | local_wins | Per-row insert/update | Dry-run by default |
-
-## Shared Utilities
-
-### beproduct_api_utils.py (Inbound)
-
-**OAuth Token Management:**
-```python
-oauth = BeProductOAuth(client_id, client_secret, refresh_token)
-token = oauth.get_access_token()  # Auto-refresh if expired
-```
-
-**API Client with Pagination:**
-```python
-client = BeProductClient(client_id, client_secret, refresh_token, company_domain)
-
-# Fetch all styles with automatic pagination
-for style in client.fetch_styles(incremental_filter="2026-05-01T00:00:00Z"):
-    # Process style
-    pass
-
-# Fetch single record by ID
-style = client.fetch_style_by_id("style-uuid")
-```
-
-**Data Normalization:**
-```python
-# Convert API response to flat Delta row
-normalized = normalize_style_row(api_response, sync_time, batch_id)
-# Returns dict with: id, folder_id, folder_name, header_number, header_name, 
-#                     active, created_at, modified_at, synced_at, data_json, ...
-```
+**Output:**
+- Delta table: `{catalog}.{schema}.{table_name}` (e.g., `lft.beproduct.ktb_styles`)
+- Audit table: `{catalog}.{schema}.{table_name}_sync_meta` (sync metadata & timestamps)
 
 **Features:**
-- 🔐 Auto-refresh access tokens with 8-hour cache
-- 📄 Pagination for 1000+ record endpoints
-- ⏱️ Exponential backoff on rate limits (429 responses)
-- 🔄 Automatic retry on transient failures
-- 🔤 Standardized field extraction from headerData.fields[]
-- 🎨 Handles colorPaletteName quirk for colors
+- ✅ FULL and INCREMENTAL sync modes
+- ✅ Timestamp-based incremental detection
+- ✅ Field extraction from BeProduct `headerData.fields[]` structure
+- ✅ Full JSON stored for audit trail
+- ✅ Stream-specific audit metadata tables
 
-### beproduct_push_utils.py (Outbound)
+### 2. Master Data Sync: `beproduct_master_data_sync.py`
 
-**Conflict Detection:**
-```python
-detector = ConflictDetector()
-is_conflict, reason = detector.detect_conflict(
-    local_record,
-    remote_record,
-    strategy="local_wins"
-)
-# Returns: (bool, str) - conflict detected? and why?
-```
+**Purpose:** Fetch valid dropdown values (Master Data) from BeProduct for field validation.
 
-**Record Merging:**
-```python
-merger = RecordMerger()
-merged = merger.merge(local, remote, strategy="local_wins")
-# Returns merged record ready for API push
-```
+**Schedule:** Daily (e.g., 10am UTC, before STYLE PUSH)
 
-**Push Operations:**
-```python
-pusher = BeProductPusher(oauth)
-success, message = pusher.push_style(style_record)
-```
+**Parameters:**
+- `catalog` - Target Databricks catalog (default: `lft`)
+- `schema` - Target Databricks schema (default: `beproduct`)
 
-**Audit Logging:**
-```python
-entry = create_audit_log_entry(
-    record_id="uuid",
-    master_type="styles",
-    action="UPDATE",
-    databricks_modified_at="2026-05-05T...",
-    beproduct_modified_at="2026-05-04T...",
-)
-# Insert into bp_audit_log table
-```
+**Master Data Types Extracted:**
+- BRANDS
+- TEAMS
+- SEASONS
+- YEARS
+- PRODUCT STATUS
+- PRODUCT CATEGORY
+- PRODUCT SUB CATEGORY
+- DIVISION
+- TECHPACK STAGE
+- GARMENT FINISH
+- PARENT VENDOR
+- FACTORY
+
+**Output:**
+- Master data tables: `{catalog}.{schema}.beproduct_master_{type}` (e.g., `lft.beproduct.beproduct_master_brands`)
+- Each table has columns: `value`, `label`, `data_json`, `synced_at`
 
 **Features:**
-- ⏰ Timestamp-based conflict detection
-- 🔀 Configurable merge strategies (local_wins, remote_wins, manual_review)
-- 📊 Comprehensive audit logging for compliance
-- 🛡️ Safe defaults (dry_run=true, require explicit enable)
+- ✅ Authenticates with BeProduct OAuth
+- ✅ Fetches via `/api/{company}/MasterData/{fieldId}` endpoints
+- ✅ Creates reference tables for validation
+- ✅ Uses SDK session for authenticated requests
 
-## Delta Table Schemas
-
-### Common Master Tables (Styles, Materials, Colors, Images, Blocks)
-
+**Usage Example:**
 ```sql
-CREATE TABLE main.beproduct.bp_[master] (
-    id STRING PRIMARY KEY,
-    folder_id STRING,
-    folder_name STRING,
-    header_number STRING,
-    header_name STRING,
-    active BIGINT (0 or 1),
-    created_at STRING (ISO datetime),
-    modified_at STRING (ISO datetime),
-    synced_at STRING (this sync run),
-    last_beproduct_id STRING (for merge tracking),
-    data_json STRING (complete API response),
-    _databricks_modified_at TIMESTAMP (system column),
-    _databricks_modified_by STRING (user/job that modified),
-    _sync_batch_id STRING (correlation ID for sync run),
-    
-    -- Master-specific columns (for analytics)
-    [colorway_count | size_range_count | color_chip_count | size_class_count] BIGINT
-) USING DELTA;
+-- Validate brands before pushing
+SELECT value, label 
+FROM lft.beproduct.beproduct_master_brands 
+ORDER BY label;
 ```
 
-### Specialized Tables
+### 3. STYLE Push: `beproduct_style_push.py`
 
-**bp_directory:**
+**Purpose:** Push modified STYLE records from Delta Lake back to BeProduct.
+
+**Trigger:** Manual (Databricks UI/API) or hourly schedule
+
+**Parameters:**
+- `folder_name` - BeProduct folder name (default: `KTB`)
+- `source_table_name` - Source Delta table name (default: `ktb_styles`)
+- `dry_run` - `true` (log only) or `false` (actually push) (default: `true`)
+- `catalog` - Target Databricks catalog (default: `lft`)
+- `schema` - Target Databricks schema (default: `beproduct`)
+
+**Output:**
+- Audit table: `{catalog}.{schema}.{source_table_name}_push_log` (push operation history)
+
+**Features:**
+- ✅ Change detection via `modified_at > synced_at` timestamp comparison
+- ✅ Field ID mapping from `data_json` (required by BeProduct API)
+- ✅ Dry-run mode by default (safe, no actual updates)
+- ✅ Comprehensive logging of all push operations
+- ✅ Audit trail for compliance
+
+**Usage Example:**
 ```sql
-id, directory_id, name, partner_type, country, active, address, city, state, zip_code,
-phone, website, modified_at, synced_at, contact_count, data_json, ...
+-- View last 5 push operations
+SELECT * FROM lft.beproduct.ktb_styles_push_log
+ORDER BY pushed_at DESC
+LIMIT 5;
 ```
 
-**bp_users:**
+## Setup
+
+### Prerequisites
+
+1. **Databricks workspace** with Spark 14.3+ and Delta Lake
+2. **BeProduct credentials** in Databricks Secrets:
+   ```
+   Scope: beproduct
+   Keys:
+     - client_id
+     - client_secret
+     - refresh_token
+     - company_domain
+   ```
+3. **Catalog & Schema** accessible to cluster
+
+### Quick Start
+
+1. **Create secret scope:**
+   ```bash
+   databricks secrets create-scope --scope beproduct
+   ```
+
+2. **Add credentials:**
+   ```bash
+   databricks secrets put --scope beproduct --key client_id --string-value "YOUR_CLIENT_ID"
+   databricks secrets put --scope beproduct --key client_secret --string-value "YOUR_CLIENT_SECRET"
+   databricks secrets put --scope beproduct --key refresh_token --string-value "YOUR_REFRESH_TOKEN"
+   databricks secrets put --scope beproduct --key company_domain --string-value "YOUR_COMPANY_DOMAIN"
+   ```
+
+3. **Upload notebooks to Databricks Repos:**
+   - `/Repos/beproduct-sync/STYLE/beproduct_style_sync`
+   - `/Repos/beproduct-sync/STYLE/beproduct_style_push`
+   - `/Repos/beproduct-sync/MASTERDATA/beproduct_master_data_sync`
+
+4. **Create jobs** in Databricks Workflows:
+   - Pull job: Schedule daily at 7pm HKT (11am UTC)
+   - Master data job: Schedule daily at 10am UTC
+   - Push job: Manual trigger or hourly
+
+5. **Test each notebook** individually before scheduling
+
+## Documentation
+
+- **`QUICK_START.md`** - Step-by-step setup for STYLE sync/push
+- **`QUICK_REFERENCE.md`** - Quick reference for all jobs and parameters
+- **`PUSH_SETUP.md`** - Detailed push job setup and testing
+- **`PUSH_QUICK_START.md`** - Push job quick start
+- **`MASTER_DATA_SETUP.md`** - Master data job setup and troubleshooting
+- **`MASTER_DATA_QUICK_START.md`** - Master data job quick start
+
+## Audit Trail
+
+All sync and push operations are logged to metadata tables:
+
+**Pull Audit:** `{table_name}_sync_meta`
+- Records: last sync timestamp, record count, sync status
+
+**Push Audit:** `{table_name}_push_log`
+- Records: what was pushed, when, by which job, success/failure
+
+**View last 5 sync operations:**
 ```sql
-id, email, username, first_name, last_name, title, account_type, role,
-registered_on, active, synced_at, data_json, ...
+SELECT * FROM lft.beproduct.ktb_styles_sync_meta
+ORDER BY synced_at DESC
+LIMIT 5;
 ```
 
-**bp_data_tables:**
+**View last 5 push operations:**
 ```sql
--- List of all data table definitions
-id, name, description, active, created_at, modified_at, synced_at, data_json, ...
+SELECT * FROM lft.beproduct.ktb_styles_push_log
+ORDER BY pushed_at DESC
+LIMIT 5;
 ```
 
-**bp_data_table_[name]:**
-```sql
--- Rows from specific data table
-id, data_table_id, data_table_name, created_at, modified_at, synced_at,
-field_[field_id], field_[field_id], ..., field_count, data_json, ...
-```
+## Multi-Folder Setup
 
-**bp_audit_log:**
-```sql
--- All push operations for compliance
-audit_id, timestamp, job_id, run_id, master_type, record_id, action,
-databricks_modified_at, beproduct_modified_at, error_message, databricks_user, ...
-```
+To sync different BeProduct folders (e.g., KTB, WMT, WALMART):
 
-## Job Configuration
+1. Create separate jobs with different `folder_name` and `table_name` parameters:
+   ```
+   Job 1: folder_name=KTB, table_name=ktb_styles
+   Job 2: folder_name=WMT, table_name=wmt_styles
+   Job 3: folder_name=WALMART, table_name=walmart_styles
+   ```
 
-### Inbound Jobs (Every 6 Hours)
+2. Each folder gets its own:
+   - Delta table (`ktb_styles`, `wmt_styles`, etc.)
+   - Sync metadata table (`ktb_styles_sync_meta`, `wmt_styles_sync_meta`, etc.)
+   - Push log table (`ktb_styles_push_log`, `wmt_styles_push_log`, etc.)
 
-See `jobs/inbound/sync_jobs.yaml` for complete YAML definition.
+3. Master data is shared across all folders (one set of reference tables)
 
-**Schedule:**
-- 00:00, 06:00, 12:00, 18:00 UTC
-- 8 jobs total, staggered by 30 min offset
+## Troubleshooting
 
-**Cluster:**
-- Runtime: Spark 14.3 LTS
-- Node type: i3.xlarge (default) → i3.2xlarge for large catalogs
-- Workers: 1-4 (depends on master size)
-- Timeout: 3600 seconds (1 hour)
-- Max retries: 1
+### Authentication Errors
 
-### Outbound Jobs (On-Demand Only)
+**Error:** `unauthorized_client` or `401 Unauthorized`
 
-See `jobs/outbound/push_jobs.yaml` for complete YAML definition.
+**Solution:**
+1. Verify credentials in Databricks secrets:
+   ```bash
+   databricks secrets get --scope beproduct --key client_id
+   ```
+2. Verify OAuth token endpoint is accessible
+3. Check BeProduct support for any special OAuth configuration needed
 
-**Trigger:**
-- Manual via Databricks UI or API
-- No scheduled runs (safe by default)
-- Dry-run mode by default (dry_run=true)
+### Connection Errors
 
-**Cluster:**
-- Runtime: Spark 14.3 LTS
-- Node type: i3.xlarge
-- Workers: 1
-- Timeout: 3600 seconds
-- Max retries: 0 (no retry on push to avoid double writes)
+**Error:** `Name or service not known` or DNS resolution failure
 
-## Parameters
+**Solution:**
+1. Verify API base URL is correct: `https://developers.beproduct.com`
+2. Verify `company_domain` in secrets (should be like `lifung`, `kinto`, etc.)
+3. Check Databricks cluster can reach `developers.beproduct.com`
 
-### Inbound Notebooks
+### No Data Synced
 
-```
-incremental_mode (bool)     : if true, only fetch modified since last sync (default: true)
-target_catalog (str)        : Unity Catalog name (default: main)
-target_schema (str)         : Schema name (default: beproduct)
-batch_size (int)            : rows per batch write (default: 1000)
-```
+**Solution:**
+1. Check notebook logs for errors
+2. Verify `folder_name` matches a valid BeProduct folder
+3. Try FULL refresh mode to fetch all records
+4. Check if BeProduct folder actually has records
 
-### Outbound Notebooks
+## Performance
 
-```
-dry_run (bool)              : if true, log changes but don't push (default: true)
-target_catalog (str)        : Unity Catalog name (default: main)
-target_schema (str)         : Schema name (default: beproduct)
-```
+### Typical Sync Times
 
-## Deployment
+- **FULL sync of 50 styles:** ~30-60 seconds
+- **INCREMENTAL sync (no changes):** ~10-15 seconds
+- **INCREMENTAL sync (50 new/modified):** ~30 seconds
 
-See **DATABRICKS_SETUP.md** for complete step-by-step deployment guide.
+### Scaling for Large Datasets
 
-Quick reference:
-1. Create secret scope: `databricks secrets create-scope --scope beproduct`
-2. Add credentials to secrets
-3. Upload notebooks to workspace
-4. Create Unity Catalog & schema
-5. Deploy jobs (UI, CLI, or Terraform)
-6. Test inbound sync
-7. Test outbound push (dry-run)
-8. Enable push-back when ready
+For catalogs with >1000 records:
+1. Increase cluster worker count (default: 1)
+2. Use larger node type (default: i3.xlarge)
+3. Increase job timeout (default: 1800 seconds)
 
-## Monitoring & Troubleshooting
+## Next Steps
 
-### Monitor Sync Health
-
-```sql
--- Check last sync times
-SELECT 
-    'styles' as master, MAX(synced_at) as last_sync, COUNT(*) as count
-FROM main.beproduct.bp_styles
-UNION ALL SELECT 'materials', MAX(synced_at), COUNT(*) FROM main.beproduct.bp_materials
--- ... etc
-```
-
-### Monitor Push Operations
-
-```sql
--- Audit log of all push operations
-SELECT * FROM main.beproduct.bp_audit_log
-WHERE timestamp > CURRENT_TIMESTAMP() - INTERVAL 24 HOUR
-ORDER BY timestamp DESC;
-```
-
-### Common Issues
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| "Secret scope not found" | Secrets not created | `databricks secrets create-scope --scope beproduct` |
-| "Rate limited (429)" | Too many API calls | Increase timeout, reduce batch_size |
-| "Table not found" | First run, table doesn't exist yet | Run inbound notebook once, table will be created |
-| Incremental sync not working | synced_at is NULL | Run full sync (incremental_mode=false) first |
-
-## Performance Tuning
-
-For catalogs with **>10,000 records**:
-
-1. **Increase batch size**: `batch_size=5000` (default 1000)
-2. **Use larger cluster**: `i3.2xlarge` (default i3.xlarge)
-3. **Scale workers**: `num_workers=4` (default 1-2)
-4. **Increase timeout**: `timeout_seconds=7200` (default 3600)
-
-## Security
-
-✅ **Best Practices:**
-- Credentials stored in Databricks Secrets (not code)
-- Unity Catalog for access control
-- All push operations logged to bp_audit_log
-- Dry-run mode by default (safe)
-- OAuth token auto-refresh (never hardcoded)
-
-❌ **Never:**
-- Hardcode credentials
-- Share personal access tokens
-- Run on unsecured clusters
-- Set dry_run=false without testing
-
-## FAQ
-
-**Q: Can I customize sync frequency?**  
-A: Yes! Edit the cron expression in `jobs/inbound/sync_jobs.yaml` and redeploy.
-
-**Q: What happens if a sync fails?**  
-A: Job will retry once (max_retries=1). Check Databricks job logs for details. Push jobs never retry (max_retries=0) to prevent double writes.
-
-**Q: Can I sync only certain masters?**  
-A: Yes! Deploy only the notebooks/jobs you need. Each master is independent.
-
-**Q: What if there's a conflict during push?**  
-A: Default strategy is `local_wins` (Databricks overwrites BeProduct). Change to `manual_review` in job params to require approval first.
-
-**Q: How do I rollback a push?**  
-A: Check bp_audit_log to see what was pushed. Manually revert in BeProduct UI or re-push from a backup of the Delta table.
+1. ✅ Create secret scope and add credentials
+2. ✅ Upload notebooks to Databricks
+3. ✅ Run STYLE SYNC once to create tables
+4. ✅ Run MASTER DATA SYNC to create reference tables
+5. ✅ Test STYLE PUSH in dry-run mode
+6. ✅ Schedule jobs in Databricks Workflows
+7. ✅ Monitor audit tables for sync health
 
 ---
 
-**Version**: 1.0  
-**Status**: Production-ready  
-**Last Updated**: 2026-05-05
+**Version:** 2.0  
+**Status:** Production-ready (STYLE sync/push & Master Data only)  
+**Last Updated:** 2026-05-28

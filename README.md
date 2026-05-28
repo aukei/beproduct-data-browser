@@ -78,7 +78,25 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ---
 
-## Export to Databricks
+## Databricks Integration: Standalone Notebooks
+
+For production ETL pipelines, **standalone Databricks notebooks** provide bidirectional sync of STYLE master data with Delta Lake:
+
+- **STYLE Sync** (`beproduct_style_sync.py`) — Daily pull from BeProduct to Databricks
+- **STYLE Push** (`beproduct_style_push.py`) — On-demand push of changes back to BeProduct
+- **Master Data** (`beproduct_master_data_sync.py`) — Reference tables for field validation
+
+These notebooks:
+- Run independently (no local app required)
+- Support multiple folders (KTB, WMT, WALMART, etc.)
+- Include audit trails for all operations
+- Use Delta Lake for data consistency
+
+**See `databricks/README.md` for complete setup and usage.**
+
+---
+
+## Legacy: Export from Local App to Databricks
 
 The `scripts/upload_to_databricks.py` script uploads all 6 models (Styles, Materials, Colors, Images, Blocks, Directory) from your local SQLite database to Azure Databricks Delta tables.
 
@@ -245,9 +263,20 @@ beproduct-data-browser/
 │       ├── _field_editor.py    # Shared schema-based field editor component
 │       ├── _create_dialog.py   # Shared "Create New Record" dialog
 │       └── _delete_dialog.py   # Shared "Delete Record" confirmation dialog
+├── databricks/
+│   ├── README.md                          # Databricks notebooks guide
+│   ├── beproduct_style_sync.py            # STYLE pull job (daily)
+│   ├── beproduct_style_push.py            # STYLE push job (on-demand)
+│   ├── beproduct_master_data_sync.py      # Master data reference tables
+│   ├── QUICK_START.md                     # Quick start guide for STYLE jobs
+│   ├── QUICK_REFERENCE.md                 # Parameters & operations reference
+│   ├── PUSH_SETUP.md                      # Detailed push job setup
+│   ├── PUSH_QUICK_START.md                # Push job quick start
+│   ├── MASTER_DATA_SETUP.md               # Master data job setup
+│   └── MASTER_DATA_QUICK_START.md         # Master data quick start
 ├── scripts/
 │   ├── get_refresh_token.py          # One-time OAuth token bootstrap helper
-│   └── upload_to_databricks.py       # Bulk export: all models to Databricks Delta
+│   └── upload_to_databricks.py       # Bulk export: all models to Databricks Delta (legacy)
 ├── data/                       # SQLite database (gitignored)
 ├── .env.example
 ├── .gitignore

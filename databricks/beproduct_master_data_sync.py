@@ -3,29 +3,17 @@
 BeProduct Master Data Sync Job
 ===============================
 
-Pulls valid dropdown values (Master Data) from BeProduct API.
+Pulls valid dropdown values (Master Data) from BeProduct API using authenticated requests.
 
-Uses the same BeProduct SDK approach as:
-  - Local app: app/beproduct_client.py (via SDK client)
-  - Pull job: beproduct_style_sync.py (via SDK)
-  
 This job fetches enumerated values for dropdown/multiselect fields:
-  - BRANDS
-  - TEAM
-  - SEASON
-  - YEAR
-  - PRODUCT STATUS
-  - PRODUCT CATEGORY
-  - PRODUCT SUB CATEGORY
-  - DIVISION
-  - TECHPACK STAGE
-  - GARMENT FINISH
-  - PARENT VENDOR
-  - FACTORY
+  - BRANDS, TEAM, SEASON, YEAR
+  - PRODUCT STATUS, PRODUCT CATEGORY, PRODUCT SUB CATEGORY
+  - DIVISION, TECHPACK STAGE, GARMENT FINISH
+  - PARENT VENDOR, FACTORY
 
 Master Data is used for validation when pushing changes back to BeProduct.
 
-Schedule: Daily before the pull job (e.g., 10am UTC, refresh periodically)
+Schedule: Daily (e.g., 8am UTC, before pull job)
 
 Parameters:
   - catalog: Target Databricks catalog (default: "lft")
@@ -44,8 +32,8 @@ print("=" * 80)
 # Install required packages
 print("\n📦 Installing dependencies...")
 try:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "requests"])
-    print("✅ Dependencies installed")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "beproduct", "requests"])
+    print("✅ Dependencies installed (beproduct, requests)")
 except Exception as e:
     print(f"❌ Failed: {str(e)}")
     raise
@@ -57,6 +45,7 @@ import logging
 import requests
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from beproduct.sdk import BeProduct
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -105,8 +94,6 @@ try:
     print("   ✓ All credentials retrieved")
     
     print("🚀 Initializing BeProduct SDK...")
-    # Import and use SDK like the pull job does
-    from beproduct.sdk import BeProduct
     api = BeProduct(
         client_id=client_id,
         client_secret=client_secret,
@@ -115,6 +102,26 @@ try:
     )
     print("✅ BeProduct SDK initialized (OAuth handled internally)")
     
+    # Extract access token from SDK for API calls
+    # The SDK stores the token after authentication
+    if hasattr(api, 'access_token'):
+        access_token = api.access_token
+    elif hasattr(api, '_access_token'):
+        access_token = api._access_token
+    else:
+        # Make a dummy request to trigger token generation
+        try:
+            api.get_styles()  # This should populate the token
+            access_token = getattr(api, 'access_token', None) or getattr(api, '_access_token', None)
+        except:
+            pass
+    
+    if not access_token:
+        print("⚠️  Could not extract token from SDK, will attempt requests without explicit token")
+        access_token = None
+    else:
+        print(f"✅ Access token obtained from SDK")
+    
 except Exception as e:
     print(f"❌ Authentication failed: {str(e)}")
     import traceback
@@ -122,7 +129,7 @@ except Exception as e:
     raise
 
 # ============================================================================
-# Step 2: Define Master Data Endpoints
+# Step 2: Define Master Data to Fetch
 # ============================================================================
 
 print(f"\n{'='*80}")
@@ -161,37 +168,40 @@ print("=" * 80)
 
 master_data_cache = {}
 
-base_url = f"https://{company_domain}.beproduct.com/api/{company_domain}/MasterData"
+base_url = f"https://developers.beproduct.com/api/{company_domain}/MasterData"
 
 print(f"\n📡 API Base URL: {base_url}")
-print(f"✅ SDK initialized successfully (credentials validated)")
+print(f"✅ SDK initialized and ready for authenticated requests")
 
-# Check if SDK has master data methods
-has_masterdata_method = hasattr(api, 'masterdata') or hasattr(api, 'master_data')
-print(f"🔍 Checking SDK for master data support: {has_masterdata_method}")
+# Setup headers with Bearer token (if available)
+headers = {
+    "Content-Type": "application/json"
+}
+
+if access_token:
+    headers["Authorization"] = f"Bearer {access_token}"
+    print(f"ℹ️  Using Bearer token for authentication")
 
 for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
     try:
         print(f"\n🔍 Fetching {data_type} ({field_id})...")
         
-        # Try SDK method first if available
-        if has_masterdata_method:
-            print(f"   Using SDK method...")
-            try:
-                if hasattr(api, 'masterdata'):
-                    data = api.masterdata.get(field_id)
-                elif hasattr(api, 'master_data'):
-                    data = api.master_data.get(field_id)
-                master_data_cache[data_type] = data if data else []
-                print(f"   ✅ Success (SDK)")
-                continue
-            except Exception as sdk_error:
-                print(f"   SDK method failed: {str(sdk_error)[:100]}")
-        
-        # Fallback: try HTTP request
         url = f"{base_url}/{field_id}"
-        print(f"   Trying HTTP request to {url}...")
-        response = requests.get(url, timeout=30)
+        print(f"   URL: {url}")
+        
+        # Try with SDK session first (if available), then with requests
+        response = None
+        
+        # Try using SDK's session if available
+        if hasattr(api, 'session'):
+            try:
+                response = api.session.get(url, timeout=30)
+            except Exception as sdk_session_error:
+                print(f"   ℹ️  SDK session failed: {str(sdk_session_error)[:80]}")
+        
+        # Fallback to direct requests
+        if response is None:
+            response = requests.get(url, headers=headers, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
@@ -208,9 +218,8 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
             print(f"   ✅ Success: {count} items")
         
         elif response.status_code == 401:
-            print(f"   ❌ Unauthorized (401) - Authentication required")
-            print(f"      The master data endpoint requires authentication.")
-            print(f"      This may require special OAuth configuration in BeProduct.")
+            print(f"   ❌ Unauthorized (401) - Authentication failed")
+            print(f"      Response: {response.text[:200]}")
             master_data_cache[data_type] = []
         
         elif response.status_code == 404:
@@ -218,11 +227,18 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
             master_data_cache[data_type] = []
         
         else:
-            print(f"   ⚠️  Failed ({response.status_code}): {response.text[:100]}")
+            print(f"   ⚠️  Failed ({response.status_code}): {response.text[:200]}")
             master_data_cache[data_type] = []
     
+    except requests.exceptions.ConnectionError as ce:
+        print(f"   ❌ Connection Error: {str(ce)[:100]}")
+        print(f"   ⚠️  Verify company_domain is correct in secrets")
+        master_data_cache[data_type] = []
+    
     except Exception as e:
-        print(f"   ❌ Error: {str(e)}")
+        print(f"   ❌ Error: {str(e)[:100]}")
+        import traceback
+        traceback.print_exc()
         master_data_cache[data_type] = []
 
 # ============================================================================
@@ -288,16 +304,17 @@ try:
     spark.sql(f"USE CATALOG {catalog_val}")
     spark.sql(f"USE SCHEMA {schema_val}")
     
-    print(f"\n📊 Master Data Tables Created:")
+    print(f"\n📊 Master Data Tables in Delta Lake:")
     
-    for data_type in MASTER_DATA_ENDPOINTS.keys():
+    for data_type in MASTER_DATA_FIELD_IDS.keys():
         table_name = f"beproduct_master_{data_type}"
         
         try:
             count = spark.sql(f"SELECT COUNT(*) as cnt FROM {catalog_val}.{schema_val}.{table_name}").collect()[0]["cnt"]
-            print(f"   ✓ {table_name}: {count} items")
+            status = "✓" if count > 0 else "✗"
+            print(f"   {status} {table_name}: {count} items")
         except:
-            print(f"   ✗ {table_name}: (failed to count)")
+            print(f"   ✗ {table_name}: (table not found or error)")
 
 except Exception as e:
     print(f"❌ Failed to create summary: {str(e)}")
@@ -315,6 +332,10 @@ print(f"   Catalog: {catalog_val}")
 print(f"   Schema: {schema_val}")
 print(f"   Timestamp: {datetime.now(timezone.utc).isoformat()}")
 
+if total_stored == 0:
+    print(f"\n⚠️  No data was synced - likely API connectivity or endpoint issues")
+    print(f"   See troubleshooting guide in MASTER_DATA_SETUP.md")
+
 print(f"\n📋 Available master data tables:")
 print(f"   - beproduct_master_brands")
 print(f"   - beproduct_master_teams")
@@ -328,14 +349,5 @@ print(f"   - beproduct_master_techpack_stage")
 print(f"   - beproduct_master_garment_finish")
 print(f"   - beproduct_master_parent_vendor")
 print(f"   - beproduct_master_factory")
-
-print(f"\n💡 Use these to validate dropdown values before pushing:")
-print(f"""
-   SELECT DISTINCT value, label FROM {catalog_val}.{schema_val}.beproduct_master_brands
-   ORDER BY label;
-   
-   SELECT DISTINCT value, label FROM {catalog_val}.{schema_val}.beproduct_master_teams
-   ORDER BY label;
-""")
 
 print(f"\n{'='*80}")
