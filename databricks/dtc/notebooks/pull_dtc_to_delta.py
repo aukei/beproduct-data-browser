@@ -123,16 +123,26 @@ try:
     views = connector.get_views(DTC_REQUEST_ID)
     print(f"✅ Found {len(views)} views")
     
-    # Use the first view (or "Full Version" if available)
+    # IMPORTANT: Always use "Full Version" view to get complete, unfiltered data
+    # Other views may hide columns or rows, compromising data integrity
     view_id = None
-    for v in views:
-        if v.get("viewName") == "Full Version":
-            view_id = v.get("viewId")
-            break
-    if not view_id and views:
-        view_id = views[0].get("viewId")
+    full_version_view = None
     
-    print(f"✅ Using view: {view_id}")
+    for v in views:
+        print(f"   - {v.get('viewName')}")
+        if v.get("viewName") == "Full Version":
+            full_version_view = v
+            view_id = v.get("viewId")
+    
+    if not view_id:
+        print(f"\n❌ ERROR: 'Full Version' view not found!")
+        print(f"   Available views: {[v.get('viewName') for v in views]}")
+        print(f"\n   REQUIREMENT: DTC request must have a 'Full Version' view")
+        print(f"   to ensure complete, unfiltered data is pulled.")
+        print(f"\n   Contact DTC admin to configure the 'Full Version' view.")
+        raise ValueError(f"'Full Version' view not found for request {DTC_REQUEST_ID}")
+    
+    print(f"✅ Using view: Full Version (id: {view_id})")
 
     # Pull data to DataFrame and Document metadata
     print(f"Pulling sheet data...")

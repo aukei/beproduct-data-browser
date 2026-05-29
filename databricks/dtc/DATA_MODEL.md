@@ -22,6 +22,19 @@ Workspace (e.g., "Kontoor")
                   └─ Metadata
 ```
 
+### Views (Critical Requirement)
+
+**IMPORTANT**: All DTC requests **must have a "Full Version" view** configured.
+
+- **Full Version view**: Contains ALL columns and ALL rows (unfiltered, complete data)
+- **Other views**: May hide specific columns or filter rows (used for specific reporting needs)
+
+**Sync Rule**: Always pull from "Full Version" view to ensure data integrity and completeness.
+
+The sync process will **FAIL** if "Full Version" is not available, preventing partial data pulls.
+
+---
+
 ### Request Naming Convention
 
 Format: `<customer> <seasonCode> <brand>`

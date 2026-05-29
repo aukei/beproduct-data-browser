@@ -21,7 +21,9 @@ This module provides a two-way sync solution for DTC (Data Collaboration Applica
 - ✅ **Phase 1 (Pull)**: DTC → Databricks (read-only)
   - Pull any Request by ID (parameterized)
   - Any environment (uat/prod) via parameter
-  - Any view (defaults to "Full Version")
+  - **REQUIRED**: Must use "Full Version" view (all columns, all rows)
+    - Other views may hide columns/rows, compromising data integrity
+    - Sync fails if "Full Version" not available (prevents partial pulls)
   - Document metadata stored as Delta table properties
 - ✅ **Phase 2 (Change Tracking)**: Row-level delta detection + push
   - Snapshot-based change detection (SHA256 hash of data)
@@ -54,6 +56,32 @@ This module provides a two-way sync solution for DTC (Data Collaboration Applica
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Prerequisites & Requirements
+
+### DTC Configuration
+
+**CRITICAL**: Each DTC Request must have a **"Full Version" view** configured.
+
+- **Full Version view** must contain:
+  - ✅ ALL columns (114 data columns, no filtering)
+  - ✅ ALL rows (complete dataset, no filtering)
+  - ✅ Unfiltered, complete representation of the data
+  
+- **Other views** (e.g., "Vendor 1", "Internal Use") are allowed but:
+  - ❌ May hide columns
+  - ❌ May filter rows
+  - ❌ Will NOT be used by sync (ignored)
+
+**Sync Behavior**:
+- Always pulls from "Full Version" view
+- **FAILS** with clear error if "Full Version" not found
+- Prevents accidental partial data pulls from other views
+- Ensures data integrity and completeness
+
+**Setup**: Work with DTC admin to ensure all synced requests have "Full Version" view configured.
 
 ---
 
