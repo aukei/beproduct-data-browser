@@ -124,10 +124,15 @@ try:
     
     print(f"✅ Using view: {view_id}")
 
-    # Pull data to DataFrame
+    # Pull data to DataFrame and Document metadata
     print(f"Pulling sheet data...")
-    df = connector.pull_request_to_dataframe(DTC_REQUEST_ID, view_id)
+    df, document_metadata = connector.pull_request_to_dataframe(DTC_REQUEST_ID, view_id)
     print(f"✅ Pulled {len(df)} rows, {len(df.columns)} columns")
+    
+    # Display document metadata
+    print(f"\nDocument Metadata:")
+    for key, value in document_metadata.items():
+        print(f"  {key}: {value}")
     
     # Display sample
     print(f"\nDataFrame shape: {df.shape}")
@@ -200,6 +205,28 @@ try:
         spark_df.write.format("delta").mode(WRITE_MODE).saveAsTable(target_table_path)
     
     print(f"✅ Data written to {target_table_path}")
+    
+    # Store Document metadata as table properties
+    print(f"\nStoring Document metadata as table properties...")
+    try:
+        # Build ALTER TABLE statement for properties
+        properties_statements = []
+        for key, value in document_metadata.items():
+            # Escape values for SQL
+            sql_value = str(value).replace("'", "''") if value else ""
+            properties_statements.append(f"'{key}'='{sql_value}'")
+        
+        if properties_statements:
+            props_sql = ", ".join(properties_statements)
+            alter_sql = f"ALTER TABLE {target_table_path} SET TBLPROPERTIES ({props_sql})"
+            spark.sql(alter_sql)
+            print(f"✅ Document metadata stored as table properties")
+            print(f"   Document: {document_metadata.get('document_name')}")
+            print(f"   Request: {document_metadata.get('request_reference')}")
+            print(f"   Owner: {document_metadata.get('owner_name')}")
+    except Exception as prop_error:
+        print(f"⚠️  Warning: Could not set table properties: {prop_error}")
+        # Don't fail the entire sync for this
 
 except Exception as e:
     print(f"❌ Failed to write to Delta table: {e}")

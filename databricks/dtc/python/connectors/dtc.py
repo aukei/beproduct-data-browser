@@ -96,18 +96,52 @@ class DTCConnector:
         logger.info(f"Fetching sheet: {sheet_id}, view: {view_id}")
         return self.client.get(f"/v1/sheets/{sheet_id}/views/{view_id}")
 
+    def get_document_metadata(self, request_id: str) -> Dict[str, Any]:
+        """
+        Get Document metadata for a request.
+        
+        Document is the schema definition. A Request is an instance of a Document.
+        Views are column projections defined on a Document and auto-apply to all Requests.
+        
+        Args:
+            request_id: DTC request ID
+            
+        Returns:
+            Document metadata dict with schema info
+        """
+        req = self.get_request(request_id)
+        
+        return {
+            "document_name": req.get("documentName"),
+            "request_id": req.get("requestId"),
+            "request_reference": req.get("requestReference"),
+            "request_description": req.get("requestDescription"),
+            "workspace_name": req.get("workspaceName"),
+            "sheet_id": req.get("sheetId"),
+            "request_status": req.get("requestStatusName"),
+            "request_is_active": req.get("requestIsActive"),
+            "owner_name": req.get("ownerName"),
+            "owner_email": req.get("ownerUserEmail", req.get("ownerEmail")),
+            "created_at": req.get("createdDat"),
+            "updated_at": req.get("updatedDat"),
+        }
+
     def pull_request_to_dataframe(
         self, request_id: str, view_id: str
-    ) -> pd.DataFrame:
+    ) -> tuple:
         """
         Pull a specific request's sheet data and convert to DataFrame.
+        
+        Returns both the data and document metadata for Delta table properties.
 
         Args:
             request_id: DTC request ID
-            view_id: DTC view ID (optional, uses first view if not provided)
+            view_id: DTC view ID
 
         Returns:
-            Pandas DataFrame with row data, flattened from DTC structure
+            Tuple of (DataFrame, document_metadata_dict)
+            - DataFrame: Row data with metadata columns
+            - dict: Document metadata for Delta table properties
         """
         # Get request metadata
         req = self.get_request(request_id)
@@ -153,7 +187,11 @@ class DTCConnector:
         df.columns = [self._normalize_column_name(col) for col in df.columns]
 
         logger.info(f"Created DataFrame with {len(df)} rows, {len(df.columns)} columns")
-        return df
+        
+        # Get document metadata separately for table properties
+        doc_metadata = self.get_document_metadata(request_id)
+        
+        return df, doc_metadata
 
     @staticmethod
     def _normalize_column_name(name: str) -> str:

@@ -11,8 +11,18 @@
 
 This module provides a two-way sync solution for DTC (Data Collaboration Application) requests to Databricks Delta Lake.
 
+**DTC Data Model**:
+- **Document**: Schema definition (column structure, field types)
+- **Request**: Instance of a Document (contains actual data rows)
+- **View**: Column projection defined on a Document (auto-applies to all Requests)
+- **Sheet**: Actual data storage for Request (accessed via views)
+
 **Current Scope**:
 - ✅ Pull: DTC → Databricks (read-only)
+  - Pull any Request by ID (parameterized)
+  - Any environment (uat/prod) via parameter
+  - Any view (defaults to "Full Version")
+  - Document metadata stored as Delta table properties
 - ⏳ Push: Databricks → DTC (planned)
 - ⏳ Change tracking: Row-level delta detection (planned)
 
@@ -179,19 +189,63 @@ The `pull_dtc_to_delta.py` notebook accepts these parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `dtc_request_id` | `69f076f0b7247a661226be9a` | DTC request to sync |
-| `dtc_environment` | `uat` | DTC environment (`uat` or `prod`) |
+| `dtc_request_id` | `69f076f0b7247a661226be9a` | DTC request ID to sync (parameterized) |
+| `dtc_environment` | `uat` | DTC environment: `uat` (UAT) or `prod` (Production) |
 | `target_catalog` | `lft` | Databricks catalog |
 | `target_schema` | `beproduct` | Databricks schema |
-| `target_table` | `dtc_master_chart_uat` | Target Delta table |
-| `write_mode` | `overwrite` | Write mode: `overwrite`, `append`, or `merge` |
+| `target_table` | `dtc_master_chart_uat` | Target Delta table name |
+| `write_mode` | `overwrite` | Write mode: `overwrite` (replace), `append` (add rows), or `merge` (upsert) |
 
-**Example**:
+**Dynamic Parameter Support**:
+- Change `dtc_request_id` to sync a different Request
+- Change `dtc_environment` to sync from UAT or Production
+- Change `target_table` to write to a different table
+
+**Example - Sync Different Request**:
 ```python
-# In Databricks notebook cell
-dbutils.widgets.text("dtc_request_id", "69f076f0b7247a661226be9a")
-dbutils.widgets.text("write_mode", "overwrite")
+# Interactive: Widget defaults to 69f076f0b7247a661226be9a (KON FW26 Wrangler)
+# To change, update the widget value before running
+
+# Or via CLI for scheduled job:
+databricks jobs create --json-file - << 'EOF'
+{
+  "notebook_task": {
+    "base_parameters": {
+      "dtc_request_id": "DIFFERENT_REQUEST_ID",
+      "dtc_environment": "prod",
+      "target_table": "dtc_other_request_prod"
+    }
+  }
+}
+EOF
 ```
+
+---
+
+## Document Metadata Storage
+
+When syncing a Request, the notebook automatically captures and stores **Document metadata** as Delta table properties:
+
+```sql
+-- View Document metadata
+SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
+
+-- Output includes:
+-- document_name        | KON WIP
+-- request_reference    | KON FW26 Wrangler
+-- request_description  | MASTER CHART - FW26 Supplier
+-- owner_name           | Kennis Wong
+-- owner_email          | kenniswong@lifung.com
+-- sheet_id             | 69f076f0b7247a661226be9b
+-- created_at           | 2026-04-28T08:59:28.788Z
+-- updated_at           | 2026-05-28T07:49:35.444Z
+```
+
+**Benefits**:
+- Document metadata is immutable (stored as table properties, not row data)
+- Track which Document each Request's data came from
+- Audit trail: creation and last update timestamps
+- Schema lineage: know the original Document structure
 
 ---
 
@@ -217,6 +271,17 @@ dbutils.widgets.text("write_mode", "overwrite")
 - Numbers: Prices (FOB), quantities, lead times, months
 - Dates: All stored as ISO 8601 UTC strings from DTC
 - Nulls: Many sparse fields (75-90% null for some columns)
+
+### Environment-Specific URLs
+
+The DTCConnector automatically selects the correct API URL based on the `dtc_environment` parameter:
+
+| Environment | API URL | Use Case |
+|-------------|---------|----------|
+| `uat` | `https://dtc-api.lfuat.net/api` | Development & testing (default) |
+| `prod` | `https://dtc-api.lfapps.net/api` | Production data |
+
+No code changes needed — just pass the environment parameter when initializing the connector or running the notebook.
 
 ---
 
