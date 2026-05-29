@@ -17,9 +17,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Add sync_hub to path
-sync_hub_path = Path(__file__).parent / "sync_hub" / "python"
-sys.path.insert(0, str(sync_hub_path))
+# Add python modules to path
+# Test is at databricks/dtc/tests/test_dtc_connector.py
+# Modules are at databricks/dtc/python/
+python_path = Path(__file__).parent.parent / "python"
+sys.path.insert(0, str(python_path))
 
 print("=" * 80)
 print("DTC CONNECTOR TEST")
@@ -101,10 +103,14 @@ except Exception as e:
 print("\n[TEST 5] Pull to DataFrame")
 print("-" * 80)
 try:
-    df = connector.pull_request_to_dataframe(request_id, view_id)
-    print(f"✅ DataFrame created")
+    df, doc_metadata = connector.pull_request_to_dataframe(request_id, view_id)
+    print(f"✅ DataFrame and Document metadata created")
     print(f"   Rows: {len(df)}")
     print(f"   Columns: {len(df.columns)}")
+    print(f"\nDocument metadata:")
+    print(f"   Document: {doc_metadata.get('document_name')}")
+    print(f"   Request: {doc_metadata.get('request_reference')}")
+    print(f"   Owner: {doc_metadata.get('owner_name')}")
     print(f"\nFirst few columns:")
     for col in list(df.columns)[:10]:
         print(f"   - {col}")
