@@ -74,11 +74,32 @@ Output:
 ✅ ALL TESTS PASSED
 ```
 
-### 2. Deploy to Databricks
+### 2. Understand the Data Model
+
+**Important**: Read `DATA_MODEL.md` first to understand:
+- How DTC organizes data (workspace → document → requests)
+- Request naming pattern: `<customer> <seasonCode> <brand>`
+- How DTC maps to BeProduct via composite key: `(Brand, SeasonCode, LFStyle#)`
+- Customer mapping: DTC "KON" ↔ BeProduct "KTB" (configurable)
+- SeasonCode mapping: DTC "SS28" ↔ BeProduct (Spring, 2028)
+
+### 3. Deploy to Databricks
 
 **Status**: ✅ Deployed to `/Workspace/Repos/beproduct-sync/DTC/`
 
-#### Step 1: Verify secrets are configured
+#### Step 1: Initialize SeasonCode Mapping Table
+
+Create and populate the mapping table (one-time setup):
+
+```bash
+databricks runs submit \
+  --notebook-task notebook_path=/Workspace/Repos/beproduct-sync/DTC/notebooks/00_init_season_mapping \
+  --existing-cluster-id <CLUSTER_ID>
+```
+
+**Important**: Edit the notebook to insert actual seasonCode mappings for your environment.
+
+#### Step 2: Verify secrets are configured
 
 The DTC API key has been added to the existing `beproduct` secrets scope:
 
@@ -88,25 +109,37 @@ databricks secrets list-secrets beproduct | grep dtc
 # Output: dtc_api_key_uat
 ```
 
-#### Step 2: Run the notebook (test)
+#### Step 3: Run the pull notebook
 
 The code is deployed at `/Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta`
 
 ```bash
-# Test run via Databricks UI:
-# 1. Navigate to /Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta
-# 2. Click "Run" and select a cluster
-
-# Or via CLI:
+# Via CLI with customer mapping parameters:
 databricks runs submit \
   --notebook-task notebook_path=/Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta \
+  --base-parameters '{
+    "dtc_workspace_name": "Kontoor",
+    "dtc_request_id": "69f076f0b7247a661226be9a",
+    "dtc_environment": "uat",
+    "dtc_customer": "KON",
+    "beproduct_customer": "KTB",
+    "target_catalog": "lft",
+    "target_schema": "beproduct",
+    "target_table": "dtc_master_chart_uat",
+    "write_mode": "overwrite"
+  }' \
   --existing-cluster-id <CLUSTER_ID>
 
 # Monitor
 databricks runs get-output --run-id <RUN_ID>
 ```
 
-#### Step 3: Create a scheduled job
+**Parameters explained**:
+- `dtc_customer`: Customer code in DTC (e.g., "KON")
+- `beproduct_customer`: Corresponding customer in BeProduct (e.g., "KTB")
+- Other parameters match the data model structure
+
+#### Step 4: Create a scheduled job
 
 ```bash
 # Create job configuration
@@ -124,8 +157,11 @@ cat > dtc_job_config.json << 'EOF'
   "notebook_task": {
     "notebook_path": "/Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta",
     "base_parameters": {
+      "dtc_workspace_name": "Kontoor",
       "dtc_request_id": "69f076f0b7247a661226be9a",
       "dtc_environment": "uat",
+      "dtc_customer": "KON",
+      "beproduct_customer": "KTB",
       "target_catalog": "lft",
       "target_schema": "beproduct",
       "target_table": "dtc_master_chart_uat",
@@ -480,6 +516,14 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 ---
 
 ## Support & Questions
+
+**Data Model & Mapping**: See `DATA_MODEL.md` ⭐ **START HERE**
+- How DTC organizes data (workspace → document → requests)
+- Request naming pattern and parsing
+- Customer mapping (DTC ↔ BeProduct)
+- SeasonCode mapping (DTC codes → Season/Year)
+- Composite key structure for joins
+- Implementation checklist
 
 **API Reference**: See `data_samples/DTC_API_FINDINGS.md`
 
