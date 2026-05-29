@@ -136,7 +136,15 @@ try:
     
     # Display sample
     print(f"\nDataFrame shape: {df.shape}")
-    print(f"Columns: {list(df.columns)[:10]}...")  # Show first 10 columns
+    print(f"\nColumn names (normalized for Delta Lake):")
+    print(f"  Note: HTML tags and spaces removed from DTC field names")
+    print(f"  Example: 'Product Status' → 'Product_Status'")
+    print(f"  Example: 'Proto Sample<BR/>Date' → 'Proto_SampleDate'")
+    print(f"\nSample columns (first 10):")
+    for i, col in enumerate(list(df.columns)[:10], 1):
+        print(f"  {i}. {col}")
+    if len(df.columns) > 10:
+        print(f"  ... and {len(df.columns) - 10} more")
     
     connector.close()
 

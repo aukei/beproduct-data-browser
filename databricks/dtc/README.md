@@ -272,6 +272,28 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 - Dates: All stored as ISO 8601 UTC strings from DTC
 - Nulls: Many sparse fields (75-90% null for some columns)
 
+### Column Name Normalization
+
+DTC field names contain HTML display markup (e.g., `<BR/>`, `</>`) and spaces for readability in the DTC UI.
+Delta Lake has strict column naming requirements (alphanumeric, underscores only).
+
+**Automatic normalization** converts column names:
+
+| DTC Name (Original) | Delta Name (Normalized) | Reason |
+|---------------------|-------------------------|--------|
+| `Product Status` | `Product_Status` | Spaces removed |
+| `Proto Sample<BR/>Request Date` | `Proto_SampleRequest_Date` | HTML tags removed |
+| `Final<BR/>Inspection - Due` | `FinalInspection_Due` | HTML & dashes removed |
+| `FOB Price (USD/yd/) in CW` | `FOB_Price_USD_yd_in_CW` | Parentheses & slashes removed |
+
+**Impact**: 
+- ✅ Data is preserved unchanged
+- ✅ Queries use normalized names (map visually to DTC display names)
+- ✅ No data loss or transformation
+
+**Reference mapping** (optional):
+To query using original DTC names, create a mapping table or use column aliases in Spark SQL.
+
 ### Environment-Specific URLs
 
 The DTCConnector automatically selects the correct API URL based on the `dtc_environment` parameter:
