@@ -1,10 +1,56 @@
-# Databricks Notebooks: BeProduct Sync Pipeline
+# Databricks Sync Pipeline
 
-Standalone Databricks notebooks for syncing BeProduct STYLE master data with Delta Lake tables, including support for bidirectional changes with audit trails.
+Multi-source sync platform for syncing master data and transaction records with Delta Lake tables, including support for bidirectional changes with audit trails.
+
+## Sources Supported
+
+### 1. **DTC** (Data Collaboration Tool) - Phase 1: Pull ✅
+Bi-directional sync of worksheets/requests from DTC platform.
+
+**Status:** Phase 1 (Pull) Complete & Production-Ready  
+**Location:** `/databricks/dtc/`
+
+**Features:**
+- Pull DTC requests to Delta tables (daily)
+- Automatic column name normalization
+- Document metadata stored as table properties
+- Environment-aware (UAT/Prod)
+- Parameterized request IDs (any worksheet)
+
+**Phase 2 Design Ready:** Change tracking for push (Snapshot + Change Log pattern)
+
+---
+
+### 2. **BeProduct** (Style Master Data) - STYLE & Master Data ✅
+Pull and push STYLE records and reference master data.
+
+**Status:** Production-Ready  
+**Notebooks:** `beproduct_style_sync.py`, `beproduct_style_push.py`, `beproduct_master_data_sync.py`
+
+**Features:**
+- FULL and INCREMENTAL sync modes
+- Timestamp-based change detection
+- Field ID mapping for API
+- Dry-run mode for testing
+- Audit trail for all operations
+
+---
 
 ## Architecture
 
 ```
+DTC (Phase 1: Pull ✅)
+  ├─ Daily at 2am UTC
+  │  └─ Pulls DTC requests → Delta table
+  │  └─ Normalizes column names (HTML + spaces → underscores)
+  │  └─ Stores Document metadata as table properties
+  │  └─ Overwrite mode (snapshot approach)
+  │
+  └─ Phase 2: Bi-directional (Design Ready ⏳)
+     ├─ Snapshot + Change Log pattern
+     ├─ Detect INSERT/UPDATE/DELETE
+     └─ Push changes back to DTC via PATCH
+
 STYLE SYNC (Pull)
   └─ Daily at 7pm HKT (11am UTC)
      └─ Syncs STYLE records from BeProduct to Delta
@@ -16,7 +62,7 @@ MASTER DATA SYNC
      └─ Pulls dropdown reference values from BeProduct API
      └─ Creates validation tables for field values
 
-STYLE PUSH (Pull)
+STYLE PUSH (Push)
   └─ Manual trigger or hourly
      └─ Detects changes via timestamp comparison
      └─ Pushes modified STYLE records back to BeProduct
@@ -25,6 +71,39 @@ STYLE PUSH (Pull)
 ```
 
 ## Notebooks
+
+### 0. DTC Sync: `dtc/notebooks/pull_dtc_to_delta.py`
+
+**Purpose:** Fetch DTC requests and store in Delta Lake (Pull only in Phase 1).
+
+**Schedule:** Daily at 2:00 AM UTC (customizable)
+
+**Parameters:**
+- `dtc_request_id` - DTC request to sync (default: `69f076f0b7247a661226be9a` - KON FW26 Wrangler)
+- `dtc_environment` - `uat` or `prod` (default: `uat`)
+- `target_catalog` - Target Databricks catalog (default: `lft`)
+- `target_schema` - Target Databricks schema (default: `beproduct`)
+- `target_table` - Delta table name (default: `dtc_master_chart_uat`)
+- `write_mode` - `overwrite`, `append`, or `merge` (default: `overwrite`)
+
+**Output:**
+- Delta table: `{catalog}.{schema}.{target_table}` (e.g., `lft.beproduct.dtc_master_chart_uat`)
+- Table properties: Document metadata (document_name, owner, timestamps)
+
+**Features:**
+- ✅ Any DTC request/worksheet (parameterized)
+- ✅ Environment-aware API URLs (uat/prod)
+- ✅ Column name normalization (removes HTML tags, spaces)
+- ✅ Document metadata stored as table properties
+- ✅ Automatic snapshot creation (baseline for Phase 2 change tracking)
+- ✅ 247 rows × 114 columns in <1 second
+
+**Documentation:**
+- Full guide: `dtc/README.md`
+- Change tracking design: `dtc/CHANGE_TRACKING_DESIGN.md`
+- Quick start: `QUICK_START_DTC.md`
+
+---
 
 ### 1. STYLE Pull: `beproduct_style_sync.py`
 
@@ -297,6 +376,16 @@ For catalogs with >1000 records:
 
 ---
 
-**Version:** 2.0  
-**Status:** Production-ready (STYLE sync/push & Master Data only)  
-**Last Updated:** 2026-05-28
+**Version:** 2.1  
+**Status:** Production-ready (DTC Phase 1 + STYLE sync/push & Master Data)  
+**Last Updated:** 2026-05-29
+
+## Summary
+
+| Source | Phase | Status | Notes |
+|--------|-------|--------|-------|
+| **DTC** | 1: Pull | ✅ Complete | Phase 2 design ready (change tracking) |
+| **DTC** | 2: Push | ⏳ Design | Snapshot + change log pattern |
+| **BeProduct** | STYLE Pull | ✅ Complete | FULL & INCREMENTAL modes |
+| **BeProduct** | Master Data | ✅ Complete | Reference tables for validation |
+| **BeProduct** | STYLE Push | ✅ Complete | Timestamp-based detection, dry-run mode |

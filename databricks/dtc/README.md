@@ -398,25 +398,48 @@ databricks runs submit \
 - [x] Local testing validated
 - [x] Deploy to Databricks workspace (`/Workspace/Repos/beproduct-sync/DTC/`)
 - [x] Secrets configured in `beproduct` scope
-- [ ] Schedule daily job (next step)
+- [x] Column name normalization for Delta Lake
+- [x] Document metadata storage as table properties
+- [ ] **Next**: Schedule daily job via Databricks UI
 
-### Phase 2: Push (Coming Soon)
-- [ ] Implement `DTCConnector.push()` method
-- [ ] Create push notebook
-- [ ] Add change tracking table
-- [ ] Test PATCH endpoint
+### Phase 2: Bi-directional Sync with Change Tracking (⏳ Design Complete)
+**Status**: Architecture designed (see `CHANGE_TRACKING_DESIGN.md`)
 
-### Phase 3: Change Tracking (Coming Soon)
-- [ ] Snapshot diffing algorithm
-- [ ] Change log table (INSERT/UPDATE/DELETE)
-- [ ] Conflict resolution rules
-- [ ] Incremental sync
+**Strategy**: Snapshot + Change Log pattern
+- Create baseline snapshot after each pull
+- Detect INSERT/UPDATE/DELETE by comparing snapshots
+- Log all changes with columns modified
+- Push changes to DTC via PATCH/POST/DELETE
+- Handle conflicts (last-write-wins + manual review)
 
-### Phase 4: Multi-App (Future)
+**Phases**:
+- **Phase 2a**: Change tracking infrastructure
+  - [ ] Create `dtc_sync_metadata` table (snapshots)
+  - [ ] Create `dtc_master_chart_changes` table (change log)
+  - [ ] Implement snapshot + detection algorithm
+  
+- **Phase 2b**: Push logic
+  - [ ] Extend DTCConnector: `update_row()`, `create_row()`, `delete_row()`
+  - [ ] Create push notebook (`push_changes_to_dtc.py`)
+  - [ ] Test PATCH/POST/DELETE endpoints
+  - [ ] Conflict detection & resolution
+  
+- **Phase 2c**: Monitoring
+  - [ ] Dashboard: Sync status, error rates
+  - [ ] Alerts: Conflicts, failures
+  - [ ] Audit log: All pushes tracked
+
+### Phase 3: Advanced Sync (Future)
+- [ ] Real-time sync (event-driven, not daily batches)
+- [ ] Field-level ACLs (some fields read-only)
+- [ ] Custom transformations (calculated fields)
+- [ ] Incremental updates (MERGE instead of overwrite)
+
+### Phase 4: Multi-App Integration (Future)
 - [ ] BeProduct connector
 - [ ] Miro connector
 - [ ] XTS connector
-- [ ] N-to-N conflict resolution
+- [ ] N-to-N conflict resolution across all systems
 
 ---
 
@@ -424,7 +447,13 @@ databricks runs submit \
 
 **API Reference**: See `data_samples/DTC_API_FINDINGS.md`
 
-**Architecture**: See `.kilo/plans/1779966530296-shiny-comet.md`
+**Architecture & Sync Strategy**: See `.kilo/plans/1779966530296-shiny-comet.md`
+
+**Change Tracking Design** (Phase 2): See `CHANGE_TRACKING_DESIGN.md`
+- Snapshot + change log pattern
+- How to detect INSERT/UPDATE/DELETE
+- Conflict resolution strategy
+- Implementation roadmap
 
 **Issues**: Check `Troubleshooting` section above
 
@@ -432,16 +461,27 @@ databricks runs submit \
 
 ## Files Created
 
+### Phase 1 (Pull) - Complete ✅
+
 | File | Purpose | Status |
 |------|---------|--------|
-| `databricks/dtc/python/client/rest_client.py` | Generic HTTP client | ✅ Complete |
-| `databricks/dtc/python/connectors/dtc.py` | DTC-specific logic | ✅ Complete |
-| `databricks/dtc/notebooks/pull_dtc_to_delta.py` | Main Databricks notebook | ✅ Complete |
-| `databricks/dtc/tests/test_dtc_connector.py` | Local test script | ✅ Passing |
-| `databricks/dtc/README.md` | This file | ✅ Complete |
+| `python/client/rest_client.py` | Generic HTTP client with auth + retry | ✅ Complete |
+| `python/connectors/dtc.py` | DTC API connector, snapshot + metadata | ✅ Complete |
+| `notebooks/pull_dtc_to_delta.py` | Main notebook: pull → normalize → write | ✅ Complete |
+| `tests/test_dtc_connector.py` | Unit tests (7/7 passing) | ✅ Complete |
+| `README.md` | Deployment guide, field normalization, metadata | ✅ Complete |
+
+### Phase 2 (Bi-directional) - Design ⏳
+
+| File | Purpose | Status |
+|------|---------|--------|
+| `CHANGE_TRACKING_DESIGN.md` | Snapshot + change log architecture | ✅ Design Complete |
+| `notebooks/push_changes_to_dtc.py` | Push notebook (to implement) | ⏳ Planned |
+| `python/connectors/dtc.py` extensions | PATCH/POST/DELETE methods | ⏳ Planned |
 
 ---
 
-**Last Updated**: 2026-05-28  
-**Status**: ✅ MVP Ready for Databricks Deployment
+**Last Updated**: 2026-05-29  
+**Current Status**: ✅ Phase 1 MVP Ready for Production  
+**Next Phase**: Phase 2 Change Tracking (design complete, implementation ready)
 
