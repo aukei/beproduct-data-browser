@@ -234,6 +234,67 @@ class DTCConnector:
         
         return normalized
 
+    def create_row(self, sheet_id: str, row_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new row in DTC sheet.
+        
+        Args:
+            sheet_id: DTC sheet ID
+            row_data: Dict of column_name -> value to insert
+            
+        Returns:
+            Response from DTC API (includes rowId of new row)
+        """
+        logger.info(f"Creating row in sheet {sheet_id}")
+        payload = {"columnValues": row_data}
+        return self.client.post(f"/v1/sheets/{sheet_id}/rows", payload)
+    
+    def update_row(
+        self,
+        sheet_id: str,
+        row_id: str,
+        updates: Dict[str, Dict[str, str]]
+    ) -> Dict[str, Any]:
+        """
+        Update an existing row in DTC sheet.
+        
+        Args:
+            sheet_id: DTC sheet ID
+            row_id: DTC row ID
+            updates: Dict of column_name -> {old_value, new_value}
+                     Will extract new_value for the PATCH
+            
+        Returns:
+            Response from DTC API
+        """
+        logger.info(f"Updating row {row_id} in sheet {sheet_id}")
+        
+        # Extract new values from the change dict
+        column_values = {}
+        for col_name, change_info in updates.items():
+            if isinstance(change_info, dict) and 'new_value' in change_info:
+                column_values[col_name] = change_info['new_value']
+            else:
+                # If it's not a change dict, use it directly
+                column_values[col_name] = change_info
+        
+        payload = {"columnValues": column_values}
+        return self.client.patch(f"/v1/sheets/{sheet_id}/rows/{row_id}", payload)
+    
+    def delete_row(self, sheet_id: str, row_id: str) -> Dict[str, Any]:
+        """
+        Delete a row from DTC sheet.
+        
+        Args:
+            sheet_id: DTC sheet ID
+            row_id: DTC row ID
+            
+        Returns:
+            Response from DTC API
+        """
+        logger.info(f"Deleting row {row_id} from sheet {sheet_id}")
+        return self.client.delete(f"/v1/sheets/{sheet_id}/rows/{row_id}")
+
     def close(self):
         """Close the connector."""
         self.client.close()
