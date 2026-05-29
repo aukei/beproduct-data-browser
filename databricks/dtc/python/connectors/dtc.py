@@ -96,6 +96,42 @@ class DTCConnector:
         logger.info(f"Fetching sheet: {sheet_id}, view: {view_id}")
         return self.client.get(f"/v1/sheets/{sheet_id}/views/{view_id}")
 
+    @staticmethod
+    def parse_request_name(request_reference: str) -> Dict[str, str]:
+        """
+        Parse request name to extract customer, seasonCode, and brand.
+        
+        Format: <customer> <seasonCode> <brand>
+        Example: "KON SS28 Wrangler Western" → 
+                 {dtc_customer: "KON", season_code: "SS28", brand: "Wrangler Western"}
+        
+        Args:
+            request_reference: Request name from DTC (e.g., "KON SS28 Wrangler Western")
+            
+        Returns:
+            Dict with keys: dtc_customer, season_code, brand
+            
+        Raises:
+            ValueError: If request name doesn't match expected pattern
+        """
+        parts = request_reference.strip().split()
+        
+        if len(parts) < 3:
+            raise ValueError(
+                f"Request name '{request_reference}' doesn't match pattern "
+                "<customer> <seasonCode> <brand>"
+            )
+        
+        dtc_customer = parts[0]
+        season_code = parts[1]
+        brand = " ".join(parts[2:])  # Brand can be multiple words
+        
+        return {
+            "dtc_customer": dtc_customer,
+            "season_code": season_code,
+            "brand": brand
+        }
+
     def get_document_metadata(self, request_id: str) -> Dict[str, Any]:
         """
         Get Document metadata for a request.
@@ -110,11 +146,19 @@ class DTCConnector:
             Document metadata dict with schema info
         """
         req = self.get_request(request_id)
+        request_reference = req.get("requestReference", "")
+        
+        # Parse request name to extract customer, seasonCode, brand
+        parsed = {}
+        try:
+            parsed = self.parse_request_name(request_reference)
+        except ValueError as e:
+            logger.warning(f"Could not parse request name: {e}")
         
         return {
             "document_name": req.get("documentName"),
             "request_id": req.get("requestId"),
-            "request_reference": req.get("requestReference"),
+            "request_reference": request_reference,
             "request_description": req.get("requestDescription"),
             "workspace_name": req.get("workspaceName"),
             "sheet_id": req.get("sheetId"),
@@ -124,6 +168,10 @@ class DTCConnector:
             "owner_email": req.get("ownerUserEmail", req.get("ownerEmail")),
             "created_at": req.get("createdDat"),
             "updated_at": req.get("updatedDat"),
+            # Parsed from request name
+            "dtc_customer": parsed.get("dtc_customer"),
+            "season_code": parsed.get("season_code"),
+            "brand": parsed.get("brand"),
         }
 
     def pull_request_to_dataframe(
@@ -153,18 +201,30 @@ class DTCConnector:
         # Get sheet data
         sheet = self.get_sheet(sheet_id, view_id)
 
+        # Parse request name to extract customer, seasonCode, brand
+        request_reference = req.get("requestReference", "")
+        parsed = {}
+        try:
+            parsed = self.parse_request_name(request_reference)
+        except ValueError as e:
+            logger.warning(f"Could not parse request name: {e}")
+
         # Extract metadata (for row columns - only non-null, non-singleton values)
         # Note: workspace_name, owner_name, owner_email are metadata about the Request itself
         # and don't vary per row, so they're stored as table properties instead
         metadata = {
             "request_id": req.get("requestId"),
-            "request_reference": req.get("requestReference"),
+            "request_reference": request_reference,
             "request_description": req.get("requestDescription"),
             "document_name": req.get("documentName"),
             "request_status": req.get("requestStatusName"),
             "request_is_active": req.get("requestIsActive"),
             "updated_at": req.get("updatedDat"),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
+            # Parsed from request name
+            "dtc_customer": parsed.get("dtc_customer"),
+            "season_code": parsed.get("season_code"),
+            "brand": parsed.get("brand"),
         }
 
         # Convert sheet data to DataFrame

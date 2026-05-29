@@ -37,6 +37,8 @@ try:
     dbutils.widgets.text("dtc_workspace_name", "Kontoor", "DTC Workspace Name")
     dbutils.widgets.text("dtc_request_id", "69f076f0b7247a661226be9a", "DTC Request ID")
     dbutils.widgets.text("dtc_environment", "uat", "DTC Environment (uat/prod)")
+    dbutils.widgets.text("dtc_customer", "KON", "Customer code in DTC (e.g., KON)")
+    dbutils.widgets.text("beproduct_customer", "KTB", "Customer code in BeProduct (e.g., KTB)")
     dbutils.widgets.text("target_catalog", "lft", "Target Catalog")
     dbutils.widgets.text("target_schema", "beproduct", "Target Schema")
     dbutils.widgets.text("target_table", "dtc_master_chart_uat", "Target Table Name")
@@ -49,6 +51,8 @@ except Exception as e:
 DTC_WORKSPACE_NAME = dbutils.widgets.get("dtc_workspace_name")
 DTC_REQUEST_ID = dbutils.widgets.get("dtc_request_id")
 DTC_ENVIRONMENT = dbutils.widgets.get("dtc_environment")
+DTC_CUSTOMER = dbutils.widgets.get("dtc_customer")
+BEPRODUCT_CUSTOMER = dbutils.widgets.get("beproduct_customer")
 TARGET_CATALOG = dbutils.widgets.get("target_catalog")
 TARGET_SCHEMA = dbutils.widgets.get("target_schema")
 TARGET_TABLE = dbutils.widgets.get("target_table")
@@ -57,6 +61,7 @@ WRITE_MODE = dbutils.widgets.get("write_mode")
 print(f"Workspace: {DTC_WORKSPACE_NAME}")
 print(f"Request ID: {DTC_REQUEST_ID}")
 print(f"Environment: {DTC_ENVIRONMENT}")
+print(f"Customer: DTC={DTC_CUSTOMER}, BeProduct={BEPRODUCT_CUSTOMER}")
 print(f"Target: {TARGET_CATALOG}.{TARGET_SCHEMA}.{TARGET_TABLE}")
 
 # Get DTC API key from Databricks secrets
@@ -180,11 +185,46 @@ except Exception as e:
 
 # COMMAND ----------
 
-# CELL 5: Add Metadata Columns
-print("\n[CELL 5] Add Metadata Columns")
+# CELL 5: Join SeasonCode Mapping
+print("\n[CELL 5] Join SeasonCode Mapping")
 print("-" * 80)
 
-from pyspark.sql.functions import lit, current_timestamp
+from pyspark.sql.functions import lit, current_timestamp, col
+
+# Map DTC seasonCode to BeProduct (Season, Year)
+mapping_table = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.dtc_season_code_mapping"
+
+try:
+    # Check if mapping table exists
+    mapping_df = spark.table(mapping_table)
+    print(f"Found mapping table: {mapping_table}")
+    
+    # Join with mapping: match on dtc_customer and season_code
+    spark_df = spark_df.join(
+        mapping_df,
+        (col("dtc_customer") == col("dtc_customer")) &
+        (col("season_code") == col("season_code")),
+        how="left"
+    ).select(
+        spark_df["*"],
+        mapping_df["beproduct_season"],
+        mapping_df["beproduct_year"]
+    )
+    
+    print(f"✅ Joined with seasonCode mapping")
+    print(f"   Added columns: beproduct_season, beproduct_year")
+    
+except Exception as e:
+    print(f"⚠️  Warning: Could not join with mapping table: {e}")
+    print(f"   Adding NULL columns for beproduct_season and beproduct_year")
+    spark_df = spark_df.withColumn("beproduct_season", lit(None)) \
+                       .withColumn("beproduct_year", lit(None))
+
+# COMMAND ----------
+
+# CELL 6: Add Metadata Columns
+print("\n[CELL 6] Add Metadata Columns")
+print("-" * 80)
 
 # Add sync metadata
 spark_df = spark_df.withColumn("sync_timestamp", current_timestamp()) \
@@ -194,8 +234,8 @@ print(f"✅ Added metadata columns")
 
 # COMMAND ----------
 
-# CELL 6: Write to Delta Table
-print("\n[CELL 6] Write to Delta Table")
+# CELL 7: Write to Delta Table
+print("\n[CELL 7] Write to Delta Table")
 print("-" * 80)
 
 target_table_path = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.{TARGET_TABLE}"
