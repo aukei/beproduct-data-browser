@@ -31,12 +31,26 @@ print(f"Start time: {datetime.now(timezone.utc).isoformat()}")
 print("\n[CELL 1] Configuration & Secrets")
 print("-" * 80)
 
+# Define widgets with defaults (will be overridden by job parameters if provided)
+try:
+    # These lines create the widgets with default values for interactive runs
+    dbutils.widgets.text("dtc_request_id", "69f076f0b7247a661226be9a", "DTC Request ID")
+    dbutils.widgets.text("dtc_environment", "uat", "DTC Environment (uat/prod)")
+    dbutils.widgets.text("target_catalog", "lft", "Target Catalog")
+    dbutils.widgets.text("target_schema", "beproduct", "Target Schema")
+    dbutils.widgets.text("target_table", "dtc_master_chart_uat", "Target Table Name")
+    dbutils.widgets.text("write_mode", "overwrite", "Write Mode (overwrite/append)")
+except Exception as e:
+    # If widgets already exist (running as job), this is expected
+    pass
+
 # Parameters (can be overridden by Databricks job)
-DTC_REQUEST_ID = dbutils.widgets.get("dtc_request_id") if hasattr(dbutils, "widgets") else "69f076f0b7247a661226be9a"
-DTC_ENVIRONMENT = dbutils.widgets.get("dtc_environment") if hasattr(dbutils, "widgets") else "uat"
-TARGET_CATALOG = dbutils.widgets.get("target_catalog") if hasattr(dbutils, "widgets") else "lft"
-TARGET_SCHEMA = dbutils.widgets.get("target_schema") if hasattr(dbutils, "widgets") else "beproduct"
-TARGET_TABLE = dbutils.widgets.get("target_table") if hasattr(dbutils, "widgets") else "dtc_master_chart_uat"
+DTC_REQUEST_ID = dbutils.widgets.get("dtc_request_id")
+DTC_ENVIRONMENT = dbutils.widgets.get("dtc_environment")
+TARGET_CATALOG = dbutils.widgets.get("target_catalog")
+TARGET_SCHEMA = dbutils.widgets.get("target_schema")
+TARGET_TABLE = dbutils.widgets.get("target_table")
+WRITE_MODE = dbutils.widgets.get("write_mode")
 
 print(f"Request ID: {DTC_REQUEST_ID}")
 print(f"Environment: {DTC_ENVIRONMENT}")
@@ -175,17 +189,15 @@ try:
     # - append: add to existing
     # - merge: upsert based on row_id
     
-    write_mode = dbutils.widgets.get("write_mode") if hasattr(dbutils, "widgets") else "overwrite"
-    
-    if write_mode == "overwrite":
+    if WRITE_MODE == "overwrite":
         print(f"Write mode: OVERWRITE (replace entire table)")
         spark_df.write.format("delta").mode("overwrite").saveAsTable(target_table_path)
-    elif write_mode == "append":
+    elif WRITE_MODE == "append":
         print(f"Write mode: APPEND (add rows)")
         spark_df.write.format("delta").mode("append").saveAsTable(target_table_path)
     else:
-        print(f"Write mode: {write_mode}")
-        spark_df.write.format("delta").mode(write_mode).saveAsTable(target_table_path)
+        print(f"Write mode: {WRITE_MODE}")
+        spark_df.write.format("delta").mode(WRITE_MODE).saveAsTable(target_table_path)
     
     print(f"✅ Data written to {target_table_path}")
 
