@@ -153,17 +153,16 @@ class DTCConnector:
         # Get sheet data
         sheet = self.get_sheet(sheet_id, view_id)
 
-        # Extract metadata
+        # Extract metadata (for row columns - only non-null, non-singleton values)
+        # Note: workspace_name, owner_name, owner_email are metadata about the Request itself
+        # and don't vary per row, so they're stored as table properties instead
         metadata = {
             "request_id": req.get("requestId"),
             "request_reference": req.get("requestReference"),
             "request_description": req.get("requestDescription"),
             "document_name": req.get("documentName"),
-            "workspace_name": req.get("workspaceName"),
             "request_status": req.get("requestStatusName"),
             "request_is_active": req.get("requestIsActive"),
-            "owner_name": req.get("ownerName"),
-            "owner_email": req.get("ownerUserEmail", req.get("ownerEmail")),
             "updated_at": req.get("updatedDat"),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }

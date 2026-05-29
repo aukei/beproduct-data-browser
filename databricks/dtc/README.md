@@ -189,6 +189,7 @@ The `pull_dtc_to_delta.py` notebook accepts these parameters:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `dtc_workspace_name` | `Kontoor` | DTC workspace to access (parameterized, not hardcoded) |
 | `dtc_request_id` | `69f076f0b7247a661226be9a` | DTC request ID to sync (parameterized) |
 | `dtc_environment` | `uat` | DTC environment: `uat` (UAT) or `prod` (Production) |
 | `target_catalog` | `lft` | Databricks catalog |
@@ -261,10 +262,19 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 ### Output (Delta Table)
 - **Location**: `lft.beproduct.dtc_master_chart_uat`
 - **Rows**: 247 (from DTC)
-- **Columns**: 114 (DTC fields) + 4 (metadata)
-  - `sync_timestamp`: When the sync ran
-  - `sync_date`: Date of sync
-  - `request_id`, `request_reference`, etc.
+- **Columns**: 114 (DTC fields) + metadata columns
+  - `request_id`: DTC request ID (same for all rows)
+  - `request_reference`: Request name (same for all rows)
+  - `request_description`: Request description
+  - `document_name`: Which Document this Request belongs to
+  - `request_status`: Request status
+  - `request_is_active`: Active flag
+  - `updated_at`: When request was last updated in DTC
+  - `fetched_at`: When data was pulled to Databricks
+  - `sync_timestamp`: When the Databricks sync ran
+  - `sync_date`: Date of Databricks sync
+
+**Note**: Request-level metadata (workspace_name, owner_name, owner_email) are stored as Delta **table properties** (not row columns) to avoid "void" type columns.
 
 ### Data Types
 - Strings: Product descriptions, styles, names, statuses
@@ -372,6 +382,23 @@ databricks runs submit \
   --notebook-task notebook_path=/Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta \
   --existing-cluster-id <CLUSTER_ID>
 ```
+
+### Issue: `VOID` type columns in Delta table
+
+**Cause**: Request metadata (like `workspace_name`, `owner_email`) were being added as row columns with all null values.
+Delta Lake infers these as "void" type, causing `SELECT *` errors.
+
+**Solution**: These columns are now stored as **table properties only** (not row columns):
+```sql
+-- View metadata
+SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
+
+-- Workspace name (stored as property)
+-- Owner name (stored as property)
+-- Owner email (stored as property)
+```
+
+**Impact**: Cleaner schema with only data columns + sync metadata columns
 
 ### Issue: Timeout after 3600 seconds
 

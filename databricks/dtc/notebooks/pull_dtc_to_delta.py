@@ -34,6 +34,7 @@ print("-" * 80)
 # Define widgets with defaults (will be overridden by job parameters if provided)
 try:
     # These lines create the widgets with default values for interactive runs
+    dbutils.widgets.text("dtc_workspace_name", "Kontoor", "DTC Workspace Name")
     dbutils.widgets.text("dtc_request_id", "69f076f0b7247a661226be9a", "DTC Request ID")
     dbutils.widgets.text("dtc_environment", "uat", "DTC Environment (uat/prod)")
     dbutils.widgets.text("target_catalog", "lft", "Target Catalog")
@@ -45,6 +46,7 @@ except Exception as e:
     pass
 
 # Parameters (can be overridden by Databricks job)
+DTC_WORKSPACE_NAME = dbutils.widgets.get("dtc_workspace_name")
 DTC_REQUEST_ID = dbutils.widgets.get("dtc_request_id")
 DTC_ENVIRONMENT = dbutils.widgets.get("dtc_environment")
 TARGET_CATALOG = dbutils.widgets.get("target_catalog")
@@ -52,6 +54,7 @@ TARGET_SCHEMA = dbutils.widgets.get("target_schema")
 TARGET_TABLE = dbutils.widgets.get("target_table")
 WRITE_MODE = dbutils.widgets.get("write_mode")
 
+print(f"Workspace: {DTC_WORKSPACE_NAME}")
 print(f"Request ID: {DTC_REQUEST_ID}")
 print(f"Environment: {DTC_ENVIRONMENT}")
 print(f"Target: {TARGET_CATALOG}.{TARGET_SCHEMA}.{TARGET_TABLE}")
@@ -99,9 +102,11 @@ try:
     connector = DTCConnector(
         api_key=dtc_api_key,
         environment=DTC_ENVIRONMENT,
-        workspace_name="Kontoor",
+        workspace_name=DTC_WORKSPACE_NAME,
     )
-    print(f"✅ DTCConnector initialized for {DTC_ENVIRONMENT}")
+    print(f"✅ DTCConnector initialized")
+    print(f"   Workspace: {DTC_WORKSPACE_NAME}")
+    print(f"   Environment: {DTC_ENVIRONMENT}")
 
     # Get request details
     request = connector.get_request(DTC_REQUEST_ID)
