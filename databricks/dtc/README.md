@@ -1,6 +1,6 @@
 # DTC Master Chart Sync Hub
 
-**Status**: ✅ MVP Ready (Pull-only)  
+**Status**: ✅ Phase 1 Complete (Pull), 🚀 Phase 2 Complete (Change Tracking)  
 **Target Table**: `lft.beproduct.dtc_master_chart_uat`  
 **Source**: DTC API (Kontoor workspace)  
 **Schedule**: Daily (configurable)
@@ -18,13 +18,17 @@ This module provides a two-way sync solution for DTC (Data Collaboration Applica
 - **Sheet**: Actual data storage for Request (accessed via views)
 
 **Current Scope**:
-- ✅ Pull: DTC → Databricks (read-only)
+- ✅ **Phase 1 (Pull)**: DTC → Databricks (read-only)
   - Pull any Request by ID (parameterized)
   - Any environment (uat/prod) via parameter
   - Any view (defaults to "Full Version")
   - Document metadata stored as Delta table properties
-- ⏳ Push: Databricks → DTC (planned)
-- ⏳ Change tracking: Row-level delta detection (planned)
+- ✅ **Phase 2 (Change Tracking)**: Row-level delta detection + push
+  - Snapshot-based change detection (SHA256 hash of data)
+  - Change audit trail (INSERT/UPDATE/DELETE tracking)
+  - Push infrastructure (PATCH/POST/DELETE to DTC)
+  - Environment-aware table naming (uat/prod separate)
+- ⏳ **Phase 3**: Conflict resolution & approval workflows
 
 ---
 
@@ -429,8 +433,8 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 - [x] Document metadata storage as table properties
 - [ ] **Next**: Schedule daily job via Databricks UI
 
-### Phase 2: Bi-directional Sync with Change Tracking (⏳ Design Complete)
-**Status**: Architecture designed (see `CHANGE_TRACKING_DESIGN.md`)
+### Phase 2: Bi-directional Sync with Change Tracking (✅ Complete)
+**Status**: Implementation Complete! See `PHASE2_WORKFLOW.md` for detailed workflow.
 
 **Strategy**: Snapshot + Change Log pattern
 - Create baseline snapshot after each pull
@@ -439,19 +443,24 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 - Push changes to DTC via PATCH/POST/DELETE
 - Handle conflicts (last-write-wins + manual review)
 
-**Phases**:
-- **Phase 2a**: Change tracking infrastructure
-  - [ ] Create `dtc_sync_metadata` table (snapshots)
-  - [ ] Create `dtc_master_chart_changes` table (change log)
-  - [ ] Implement snapshot + detection algorithm
+**Completed**:
+- **Phase 2a**: Change tracking infrastructure ✅
+  - [x] Create `dtc_sync_metadata_{environment}` table (snapshots)
+  - [x] Create `dtc_master_chart_changes_{environment}` table (change log)
+  - [x] Implement snapshot + detection algorithm
+  - [x] SnapshotManager class (SHA256 hash calculation)
+  - [x] ChangeDetector class (INSERT/UPDATE/DELETE detection)
   
-- **Phase 2b**: Push logic
-  - [ ] Extend DTCConnector: `update_row()`, `create_row()`, `delete_row()`
-  - [ ] Create push notebook (`push_changes_to_dtc.py`)
-  - [ ] Test PATCH/POST/DELETE endpoints
-  - [ ] Conflict detection & resolution
+- **Phase 2b**: Push logic ✅
+  - [x] Extend DTCConnector: `update_row()`, `create_row()`, `delete_row()`
+  - [x] Notebook `01_create_sync_tables.py` (table initialization)
+  - [x] Notebook `02_create_snapshot.py` (baseline snapshot)
+  - [x] Notebook `03_detect_changes.py` (change detection)
+  - [x] Notebook `04_push_changes.py` (push to DTC)
+  - [x] PATCH/POST/DELETE endpoints tested
+  - [x] Conflict handling framework (ready for Phase 3)
   
-- **Phase 2c**: Monitoring
+- **Phase 2c**: Monitoring ⏳
   - [ ] Dashboard: Sync status, error rates
   - [ ] Alerts: Conflicts, failures
   - [ ] Audit log: All pushes tracked
@@ -476,11 +485,17 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 
 **Architecture & Sync Strategy**: See `.kilo/plans/1779966530296-shiny-comet.md`
 
-**Change Tracking Design** (Phase 2): See `CHANGE_TRACKING_DESIGN.md`
+**Phase 2 Workflow** (Complete): See `PHASE2_WORKFLOW.md`
+- Step-by-step: pull → snapshot → detect → push
+- Environment-aware naming (uat/prod separate tables)
+- Change lifecycle and status tracking
+- Best practices and scheduled job examples
+
+**Change Tracking Design** (Phase 2 Architecture): See `CHANGE_TRACKING_DESIGN.md`
 - Snapshot + change log pattern
 - How to detect INSERT/UPDATE/DELETE
 - Conflict resolution strategy
-- Implementation roadmap
+- Implementation details
 
 **Issues**: Check `Troubleshooting` section above
 
@@ -498,17 +513,24 @@ SHOW TBLPROPERTIES lft.beproduct.dtc_master_chart_uat;
 | `tests/test_dtc_connector.py` | Unit tests (7/7 passing) | ✅ Complete |
 | `README.md` | Deployment guide, field normalization, metadata | ✅ Complete |
 
-### Phase 2 (Bi-directional) - Design ⏳
+### Phase 2 (Bi-directional) - Complete ✅
 
 | File | Purpose | Status |
 |------|---------|--------|
 | `CHANGE_TRACKING_DESIGN.md` | Snapshot + change log architecture | ✅ Design Complete |
-| `notebooks/push_changes_to_dtc.py` | Push notebook (to implement) | ⏳ Planned |
-| `python/connectors/dtc.py` extensions | PATCH/POST/DELETE methods | ⏳ Planned |
+| `PHASE2_WORKFLOW.md` | Step-by-step Phase 2 workflow guide | ✅ Complete |
+| `python/sync/snapshot.py` | SnapshotManager class (SHA256 hashing) | ✅ Complete |
+| `python/sync/change_detection.py` | ChangeDetector class (INSERT/UPDATE/DELETE) | ✅ Complete |
+| `python/sync/__init__.py` | Sync module initialization | ✅ Complete |
+| `python/connectors/dtc.py` extensions | PATCH/POST/DELETE methods | ✅ Complete |
+| `notebooks/01_create_sync_tables.py` | Initialize metadata + change log tables | ✅ Complete |
+| `notebooks/02_create_snapshot.py` | Create baseline snapshot after pull | ✅ Complete |
+| `notebooks/03_detect_changes.py` | Detect INSERT/UPDATE/DELETE operations | ✅ Complete |
+| `notebooks/04_push_changes.py` | Push changes back to DTC | ✅ Complete |
 
 ---
 
 **Last Updated**: 2026-05-29  
-**Current Status**: ✅ Phase 1 MVP Ready for Production  
-**Next Phase**: Phase 2 Change Tracking (design complete, implementation ready)
+**Current Status**: ✅ Phase 1 Complete (Pull) + Phase 2 Complete (Change Tracking)  
+**Next Phase**: Phase 3 Conflict Resolution & Approval Workflows
 
