@@ -196,18 +196,43 @@ class DTCConnector:
     @staticmethod
     def _normalize_column_name(name: str) -> str:
         """
-        Normalize column names: remove HTML tags, spaces.
+        Normalize column names for Delta Lake compatibility.
+        
+        Delta Lake restricts column names: alphanumeric, underscores, backticks allowed.
+        Removes HTML display markup and replaces invalid characters.
+        
+        This function:
+        - Removes HTML tags (e.g., <BR/>, </>, etc.)
+        - Replaces spaces, dashes, and special characters with underscores
+        - Cleans up multiple consecutive underscores
+        - Preserves alphanumeric characters and underscores
 
         Args:
-            name: Original column name
+            name: Original column name (may contain HTML, spaces, special chars)
 
         Returns:
-            Normalized column name
+            Delta-compatible column name
         """
-        # Replace HTML <BR/> tags with underscore
-        normalized = name.replace("<BR/>", "_").replace("<br/>", "_")
-        # Replace multiple spaces with single space
-        normalized = " ".join(normalized.split())
+        import re
+        
+        # Step 1: Remove HTML tags completely: <BR/>, </>, etc.
+        normalized = re.sub(r'<[^>]+>', '', name)
+        
+        # Step 2: Replace spaces, dashes, and invalid characters with underscores
+        # Keep only: alphanumeric, underscores, dots (for decimals)
+        # Replace everything else with underscore
+        normalized = re.sub(r'[^\w.]', '_', normalized)
+        
+        # Step 3: Clean up multiple consecutive underscores to single underscore
+        normalized = re.sub(r'_+', '_', normalized)
+        
+        # Step 4: Remove leading/trailing underscores
+        normalized = normalized.strip('_')
+        
+        # Step 5: Ensure name is not empty
+        if not normalized:
+            normalized = 'column'
+        
         return normalized
 
     def close(self):
