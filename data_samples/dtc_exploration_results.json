@@ -1,0 +1,33 @@
+{
+  "exploration_date": "2026-05-28T19:26:14+08:00",
+  "environment": "https://dtc-api.lfuat.net/api",
+  "status": "SUCCESS - API WORKING ✅",
+  "authenticated_user": {
+    "userId": "69ef0605052cf39ce40da418",
+    "userName": "LF - Au Chun Kei",
+    "userEmail": "auchunkei@lifung.com",
+    "userType": "",
+    "isAdmin": "N",
+    "timeZone": "",
+    "timeZoneReference": "",
+    "defaultWorkspaceId": "69eeffe5b0ca31804b3a0060",
+    "defaultWorkspaceName": "Kontoor"
+  },
+  "workspace_access": {
+    "workspaceName": "Kontoor",
+    "workspaceId": "69eeffe5b0ca31804b3a0060",
+    "role": "user:workspaceAdmin: Y"
+  },
+  "documents_count": "52+ fields in KON WIP document",
+  "requests_count": "6+ requests available",
+  "sample_request": {
+    "requestId": "69f076f0b7247a661226be9a",
+    "requestReference": "KON FW26 Wrangler",
+    "requestDescription": "MASTER CHART - FW26 Supplier",
+    "documentName": "KON WIP",
+    "sheetId": "69f076f0b7247a661226be9b",
+    "views_available": 14,
+    "rows_in_sample": 6,
+    "updatedDat": "2026-05-28T07:49:35.444Z"
+  }
+}

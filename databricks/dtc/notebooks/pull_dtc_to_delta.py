@@ -1,0 +1,227 @@
+# Databricks notebook source
+"""
+DTC Master Chart Sync Notebook
+
+Syncs a specific DTC request to a Databricks Delta table.
+Can be run as a scheduled job.
+
+Target Table: lft.beproduct.dtc_master_chart_uat
+Source: DTC API (request ID: 69f076f0b7247a661226be9a)
+"""
+
+# COMMAND ----------
+
+# Import libraries
+import sys
+import logging
+from datetime import datetime, timezone
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+print("=" * 80)
+print("DTC MASTER CHART SYNC")
+print("=" * 80)
+print(f"Start time: {datetime.now(timezone.utc).isoformat()}")
+
+# COMMAND ----------
+
+# CELL 1: Configuration & Secrets
+print("\n[CELL 1] Configuration & Secrets")
+print("-" * 80)
+
+# Parameters (can be overridden by Databricks job)
+DTC_REQUEST_ID = dbutils.widgets.get("dtc_request_id") if hasattr(dbutils, "widgets") else "69f076f0b7247a661226be9a"
+DTC_ENVIRONMENT = dbutils.widgets.get("dtc_environment") if hasattr(dbutils, "widgets") else "uat"
+TARGET_CATALOG = dbutils.widgets.get("target_catalog") if hasattr(dbutils, "widgets") else "lft"
+TARGET_SCHEMA = dbutils.widgets.get("target_schema") if hasattr(dbutils, "widgets") else "beproduct"
+TARGET_TABLE = dbutils.widgets.get("target_table") if hasattr(dbutils, "widgets") else "dtc_master_chart_uat"
+
+print(f"Request ID: {DTC_REQUEST_ID}")
+print(f"Environment: {DTC_ENVIRONMENT}")
+print(f"Target: {TARGET_CATALOG}.{TARGET_SCHEMA}.{TARGET_TABLE}")
+
+# Get DTC API key from Databricks secrets
+try:
+    dtc_api_key = dbutils.secrets.get("beproduct", "dtc_api_key_uat")
+    print("✅ DTC API key loaded from secrets")
+except Exception as e:
+    print(f"❌ Failed to load DTC API key: {e}")
+    print("   You need to set up the secret:")
+    print("   databricks secrets put-secret beproduct dtc_api_key_uat --string-value YOUR_KEY")
+    raise
+
+# COMMAND ----------
+
+# CELL 2: Import DTCConnector
+print("\n[CELL 2] Import DTCConnector")
+print("-" * 80)
+
+# Add python library path for imports
+# Notebook location: /Workspace/Repos/beproduct-sync/DTC/notebooks/pull_dtc_to_delta
+# Python modules location: /Workspace/Repos/beproduct-sync/DTC/python/
+python_path = "/Workspace/Repos/beproduct-sync/DTC/python"
+sys.path.insert(0, python_path)
+print(f"📁 Python path: {python_path}")
+
+try:
+    from connectors.dtc import DTCConnector
+    print("✅ DTCConnector imported successfully")
+except ImportError as e:
+    print(f"❌ Failed to import DTCConnector: {e}")
+    print(f"   Python path: {sys.path}")
+    print("   Make sure the databricks/dtc/python folder exists in the workspace")
+    raise
+
+# COMMAND ----------
+
+# CELL 3: Pull Data from DTC
+print("\n[CELL 3] Pull Data from DTC")
+print("-" * 80)
+
+try:
+    # Initialize connector
+    connector = DTCConnector(
+        api_key=dtc_api_key,
+        environment=DTC_ENVIRONMENT,
+        workspace_name="Kontoor",
+    )
+    print(f"✅ DTCConnector initialized for {DTC_ENVIRONMENT}")
+
+    # Get request details
+    request = connector.get_request(DTC_REQUEST_ID)
+    request_ref = request.get("requestReference", "UNKNOWN")
+    sheet_id = request.get("sheetId")
+    print(f"✅ Request loaded: {request_ref} (sheet: {sheet_id})")
+
+    # Get available views
+    views = connector.get_views(DTC_REQUEST_ID)
+    print(f"✅ Found {len(views)} views")
+    
+    # Use the first view (or "Full Version" if available)
+    view_id = None
+    for v in views:
+        if v.get("viewName") == "Full Version":
+            view_id = v.get("viewId")
+            break
+    if not view_id and views:
+        view_id = views[0].get("viewId")
+    
+    print(f"✅ Using view: {view_id}")
+
+    # Pull data to DataFrame
+    print(f"Pulling sheet data...")
+    df = connector.pull_request_to_dataframe(DTC_REQUEST_ID, view_id)
+    print(f"✅ Pulled {len(df)} rows, {len(df.columns)} columns")
+    
+    # Display sample
+    print(f"\nDataFrame shape: {df.shape}")
+    print(f"Columns: {list(df.columns)[:10]}...")  # Show first 10 columns
+    
+    connector.close()
+
+except Exception as e:
+    print(f"❌ Failed to pull from DTC: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+# COMMAND ----------
+
+# CELL 4: Convert to Spark DataFrame
+print("\n[CELL 4] Convert to Spark DataFrame")
+print("-" * 80)
+
+try:
+    # Convert Pandas to Spark
+    spark_df = spark.createDataFrame(df)
+    print(f"✅ Created Spark DataFrame: {spark_df.count()} rows")
+    
+    # Show schema
+    print("\nSchema:")
+    spark_df.printSchema()
+
+except Exception as e:
+    print(f"❌ Failed to create Spark DataFrame: {e}")
+    raise
+
+# COMMAND ----------
+
+# CELL 5: Add Metadata Columns
+print("\n[CELL 5] Add Metadata Columns")
+print("-" * 80)
+
+from pyspark.sql.functions import lit, current_timestamp
+
+# Add sync metadata
+spark_df = spark_df.withColumn("sync_timestamp", current_timestamp()) \
+                   .withColumn("sync_date", lit(datetime.now().date()))
+
+print(f"✅ Added metadata columns")
+
+# COMMAND ----------
+
+# CELL 6: Write to Delta Table
+print("\n[CELL 6] Write to Delta Table")
+print("-" * 80)
+
+target_table_path = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.{TARGET_TABLE}"
+print(f"Writing to: {target_table_path}")
+
+try:
+    # Write mode options:
+    # - overwrite: replace entire table
+    # - append: add to existing
+    # - merge: upsert based on row_id
+    
+    write_mode = dbutils.widgets.get("write_mode") if hasattr(dbutils, "widgets") else "overwrite"
+    
+    if write_mode == "overwrite":
+        print(f"Write mode: OVERWRITE (replace entire table)")
+        spark_df.write.format("delta").mode("overwrite").saveAsTable(target_table_path)
+    elif write_mode == "append":
+        print(f"Write mode: APPEND (add rows)")
+        spark_df.write.format("delta").mode("append").saveAsTable(target_table_path)
+    else:
+        print(f"Write mode: {write_mode}")
+        spark_df.write.format("delta").mode(write_mode).saveAsTable(target_table_path)
+    
+    print(f"✅ Data written to {target_table_path}")
+
+except Exception as e:
+    print(f"❌ Failed to write to Delta table: {e}")
+    import traceback
+    traceback.print_exc()
+    raise
+
+# COMMAND ----------
+
+# CELL 7: Verify Write
+print("\n[CELL 7] Verify Write")
+print("-" * 80)
+
+try:
+    # Read back and verify
+    verify_df = spark.read.table(target_table_path)
+    row_count = verify_df.count()
+    col_count = len(verify_df.columns)
+    
+    print(f"✅ Table verified:")
+    print(f"   Rows: {row_count}")
+    print(f"   Columns: {col_count}")
+    print(f"   Last updated: {datetime.now(timezone.utc).isoformat()}")
+    
+    # Display sample
+    print(f"\nSample data (first 3 rows):")
+    verify_df.select("request_reference", "row_index", "lf_style", "sync_timestamp").limit(3).display()
+
+except Exception as e:
+    print(f"⚠️  Could not verify table: {e}")
+
+# COMMAND ----------
+
+print("\n" + "=" * 80)
+print("✅ SYNC COMPLETE")
+print("=" * 80)
+print(f"End time: {datetime.now(timezone.utc).isoformat()}")
