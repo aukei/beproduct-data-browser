@@ -133,7 +133,7 @@ print("=" * 80)
 # API pattern: /api/{company}/MasterData/{fieldId}
 # Note: fieldId is the internal field identifier extracted from data_json
 MASTER_DATA_FIELD_IDS = {
-    "brands": "brands_multi",  # MultiSelect field
+    "brands": "brands_multi",  # MultiSelect field with 42 choices
     "teams": "team",            # DropDown field
     "seasons": "season",        # DropDown field
     "years": "year",            # DropDown field
@@ -142,9 +142,9 @@ MASTER_DATA_FIELD_IDS = {
     "product_sub_category": "product_sub_category",  # DropDown field
     "division": "division",     # DropDown field
     "techpack_stage": "techpack_stage",  # DropDown field
-    "garment_finish": "garment_finish",  # Text field (not typical master data)
-    "parent_vendor": "parent_vendor",    # PartnerDropDown field
-    "factory": "factory",       # PartnerDropDown field
+    # "garment_finish": "garment_finish",  # Text field - no choices to sync
+    "parent_vendor": "parent_vendor",    # PartnerDropDown field with 64 choices
+    "factory": "factory",       # PartnerDropDown field with 64 choices
 }
 
 print(f"📋 Master data types to sync: {len(MASTER_DATA_FIELD_IDS)}")
@@ -196,22 +196,6 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
                 count = 1
             
             print(f"   ✅ Success: {count} items")
-            
-            # DEBUG: Show structure for problematic fields
-            if data_type in ["factory", "garment_finish", "parent_vendor"]:
-                print(f"\n   🔍 DEBUG - {data_type} structure:")
-                if isinstance(data, dict) and "properties" in data:
-                    props = data["properties"]
-                    print(f"      Properties keys: {list(props.keys())}")
-                    if "Choices" in props:
-                        choices_val = props["Choices"]
-                        print(f"      Choices type: {type(choices_val).__name__}")
-                        if isinstance(choices_val, list):
-                            print(f"      Choices count: {len(choices_val)}")
-                            if choices_val:
-                                print(f"      First choice: {str(choices_val[0])[:100]}")
-                        elif isinstance(choices_val, dict):
-                            print(f"      Choices dict keys: {list(choices_val.keys())[:5]}")
 
         
         elif response.status_code == 401:
@@ -273,28 +257,18 @@ for data_type, data_list in master_data_cache.items():
                 choices_data = data_list["properties"].get("Choices", [])
                 if isinstance(choices_data, list) and len(choices_data) > 0:
                     choices = choices_data
-                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
-                        print(f"   🔍 Extracted {len(choices)} choices from Choices (type: list)")
                 elif isinstance(choices_data, dict):
                     # Choices might be a dict instead of list
                     choices = list(choices_data.values()) if choices_data else []
-                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
-                        print(f"   🔍 Extracted {len(choices)} choices from Choices (type: dict)")
-                else:
-                    # Debug: log fields with no choices
-                    field_name = data_list.get("fieldName", "unknown")
-                    field_type = data_list.get("fieldType", "unknown")
-                    print(f"   ℹ️  No choices (fieldType: {field_type}, fieldName: {field_name})")
-                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
-                        print(f"   🔍 Choices value: {type(choices_data).__name__} = {str(choices_data)[:100]}")
         
         # Process choices into rows
-        for idx, choice in enumerate(choices):
+        for choice in choices:
             if isinstance(choice, dict):
                 # Extract id, code, value/name from choice object
                 # Different fields use different field names:
                 # - brands, product_status use: value
-                # - teams, seasons, years, categories use: name + id
+                # - teams, seasons, years use: name + id
+                # - factory, parent_vendor use: value
                 # Priority: value > name > code > id
                 choice_value = (
                     choice.get("value") or 
@@ -302,11 +276,6 @@ for data_type, data_list in master_data_cache.items():
                     choice.get("code") or 
                     choice.get("id")
                 )
-                
-                # Debug for problematic fields
-                if data_type in ["factory", "garment_finish", "parent_vendor"] and idx < 2:
-                    print(f"   Choice [{idx}] keys: {list(choice.keys())}")
-                    print(f"   → value={choice.get('value')}, name={choice.get('name')}, code={choice.get('code')}, id={choice.get('id')}")
                 
                 row = {
                     "value": choice_value,
@@ -342,7 +311,8 @@ for data_type, data_list in master_data_cache.items():
             print(f"   ✅ Stored {len(rows)} items to {table_name}")
             total_stored += len(rows)
         else:
-            print(f"   ⚠️  No rows to store")
+            # Skip fields with no choices (text fields, not dropdowns)
+            print(f"   ⚠️  No choices available (likely a text field, not a dropdown)")
     
     except Exception as e:
         print(f"   ❌ Failed: {str(e)}")
@@ -394,7 +364,7 @@ if total_stored == 0:
     print(f"   See troubleshooting guide in MASTER_DATA_SETUP.md")
 
 print(f"\n📋 Available master data tables:")
-print(f"   - beproduct_master_brands")
+print(f"   - beproduct_master_brands (42 choices)")
 print(f"   - beproduct_master_teams")
 print(f"   - beproduct_master_seasons")
 print(f"   - beproduct_master_years")
@@ -403,8 +373,7 @@ print(f"   - beproduct_master_product_category")
 print(f"   - beproduct_master_product_sub_category")
 print(f"   - beproduct_master_division")
 print(f"   - beproduct_master_techpack_stage")
-print(f"   - beproduct_master_garment_finish")
-print(f"   - beproduct_master_parent_vendor")
-print(f"   - beproduct_master_factory")
+print(f"   - beproduct_master_parent_vendor (64 choices)")
+print(f"   - beproduct_master_factory (64 choices)")
 
 print(f"\n{'='*80}")
