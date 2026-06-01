@@ -85,6 +85,9 @@ print(f"\n{'='*80}")
 print("Step 1: Authenticate with BeProduct API")
 print("=" * 80)
 
+# Initialize access_token
+access_token = None
+
 try:
     print("🔐 Retrieving credentials from Databricks secrets...")
     client_id = dbutils.secrets.get(scope="beproduct", key="client_id")
@@ -102,25 +105,15 @@ try:
     )
     print("✅ BeProduct SDK initialized (OAuth handled internally)")
     
-    # Extract access token from SDK for API calls
-    # The SDK stores the token after authentication
-    if hasattr(api, 'access_token'):
-        access_token = api.access_token
-    elif hasattr(api, '_access_token'):
-        access_token = api._access_token
-    else:
-        # Make a dummy request to trigger token generation
-        try:
-            api.get_styles()  # This should populate the token
-            access_token = getattr(api, 'access_token', None) or getattr(api, '_access_token', None)
-        except:
-            pass
-    
-    if not access_token:
-        print("⚠️  Could not extract token from SDK, will attempt requests without explicit token")
-        access_token = None
-    else:
-        print(f"✅ Access token obtained from SDK")
+    # The BeProduct SDK stores OAuth2Client which handles token management
+    # We'll use it to get the access token for direct API calls
+    print("🔑 Obtaining access token from SDK's OAuth2Client...")
+    try:
+        access_token = api.oauth2_client.get_access_token()
+        print(f"✅ Access token obtained (length: {len(access_token) if access_token else 0})")
+    except Exception as token_error:
+        print(f"❌ Failed to get access token: {str(token_error)}")
+        raise
     
 except Exception as e:
     print(f"❌ Authentication failed: {str(e)}")
@@ -173,14 +166,13 @@ base_url = f"https://developers.beproduct.com/api/{company_domain}/MasterData"
 print(f"\n📡 API Base URL: {base_url}")
 print(f"✅ SDK initialized and ready for authenticated requests")
 
-# Setup headers with Bearer token (if available)
+# Setup headers with Bearer token
 headers = {
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {access_token}"
 }
 
-if access_token:
-    headers["Authorization"] = f"Bearer {access_token}"
-    print(f"ℹ️  Using Bearer token for authentication")
+print(f"📡 Using Bearer token authentication for API calls")
 
 for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
     try:
@@ -189,19 +181,7 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
         url = f"{base_url}/{field_id}"
         print(f"   URL: {url}")
         
-        # Try with SDK session first (if available), then with requests
-        response = None
-        
-        # Try using SDK's session if available
-        if hasattr(api, 'session'):
-            try:
-                response = api.session.get(url, timeout=30)
-            except Exception as sdk_session_error:
-                print(f"   ℹ️  SDK session failed: {str(sdk_session_error)[:80]}")
-        
-        # Fallback to direct requests
-        if response is None:
-            response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
@@ -216,6 +196,8 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
                 count = 1
             
             print(f"   ✅ Success: {count} items")
+            
+
         
         elif response.status_code == 401:
             print(f"   ❌ Unauthorized (401) - Authentication failed")
@@ -265,12 +247,38 @@ for data_type, data_list in master_data_cache.items():
         
         # Convert to rows
         rows = []
-        if isinstance(data_list, list):
-            for item in data_list:
+        
+        # The API returns field metadata with choices in properties.Choices
+        # Extract the actual choice values
+        choices = []
+        
+        if isinstance(data_list, dict):
+            # Check if this is the field metadata structure (has properties.Choices)
+            if "properties" in data_list and isinstance(data_list.get("properties"), dict):
+                choices_data = data_list["properties"].get("Choices", [])
+                if isinstance(choices_data, list):
+                    choices = choices_data
+        
+        # Process choices into rows
+        for choice in choices:
+            if isinstance(choice, dict):
+                # Extract id, code, value from choice object
                 row = {
-                    "value": item.get("id") or item.get("name") or item,
-                    "label": item.get("name") or item.get("label") or item,
-                    "data_json": json.dumps(item),
+                    "value": choice.get("value") or choice.get("id"),
+                    "label": choice.get("value") or choice.get("code") or choice.get("id"),
+                    "code": choice.get("code"),
+                    "id": choice.get("id"),
+                    "active": choice.get("active", True),
+                    "data_json": json.dumps(choice),
+                    "synced_at": datetime.now(timezone.utc).isoformat(),
+                }
+                rows.append(row)
+            else:
+                # Fallback for non-dict choices
+                row = {
+                    "value": str(choice),
+                    "label": str(choice),
+                    "data_json": json.dumps({"value": str(choice)}),
                     "synced_at": datetime.now(timezone.utc).isoformat(),
                 }
                 rows.append(row)
@@ -279,7 +287,10 @@ for data_type, data_list in master_data_cache.items():
             # Create DataFrame
             df = spark.createDataFrame(rows)
             
-            # Write to Delta (overwrite to keep only latest master data)
+            # Drop existing table (full refresh - no tracking of edits on Databricks)
+            spark.sql(f"DROP TABLE IF EXISTS {full_table_path}")
+            
+            # Write to Delta (new table with fresh data)
             df.write.format("delta").mode("overwrite").saveAsTable(full_table_path)
             
             print(f"   ✅ Stored {len(rows)} items to {table_name}")
