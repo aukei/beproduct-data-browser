@@ -197,6 +197,21 @@ for data_type, field_id in MASTER_DATA_FIELD_IDS.items():
             
             print(f"   ✅ Success: {count} items")
             
+            # DEBUG: Show structure for problematic fields
+            if data_type in ["factory", "garment_finish", "parent_vendor"]:
+                print(f"\n   🔍 DEBUG - {data_type} structure:")
+                if isinstance(data, dict) and "properties" in data:
+                    props = data["properties"]
+                    print(f"      Properties keys: {list(props.keys())}")
+                    if "Choices" in props:
+                        choices_val = props["Choices"]
+                        print(f"      Choices type: {type(choices_val).__name__}")
+                        if isinstance(choices_val, list):
+                            print(f"      Choices count: {len(choices_val)}")
+                            if choices_val:
+                                print(f"      First choice: {str(choices_val[0])[:100]}")
+                        elif isinstance(choices_val, dict):
+                            print(f"      Choices dict keys: {list(choices_val.keys())[:5]}")
 
         
         elif response.status_code == 401:
@@ -258,17 +273,23 @@ for data_type, data_list in master_data_cache.items():
                 choices_data = data_list["properties"].get("Choices", [])
                 if isinstance(choices_data, list) and len(choices_data) > 0:
                     choices = choices_data
+                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
+                        print(f"   🔍 Extracted {len(choices)} choices from Choices (type: list)")
                 elif isinstance(choices_data, dict):
                     # Choices might be a dict instead of list
                     choices = list(choices_data.values()) if choices_data else []
+                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
+                        print(f"   🔍 Extracted {len(choices)} choices from Choices (type: dict)")
                 else:
                     # Debug: log fields with no choices
                     field_name = data_list.get("fieldName", "unknown")
                     field_type = data_list.get("fieldType", "unknown")
                     print(f"   ℹ️  No choices (fieldType: {field_type}, fieldName: {field_name})")
+                    if data_type in ["factory", "garment_finish", "parent_vendor"]:
+                        print(f"   🔍 Choices value: {type(choices_data).__name__} = {str(choices_data)[:100]}")
         
         # Process choices into rows
-        for choice in choices:
+        for idx, choice in enumerate(choices):
             if isinstance(choice, dict):
                 # Extract id, code, value/name from choice object
                 # Different fields use different field names:
@@ -281,6 +302,11 @@ for data_type, data_list in master_data_cache.items():
                     choice.get("code") or 
                     choice.get("id")
                 )
+                
+                # Debug for problematic fields
+                if data_type in ["factory", "garment_finish", "parent_vendor"] and idx < 2:
+                    print(f"   Choice [{idx}] keys: {list(choice.keys())}")
+                    print(f"   → value={choice.get('value')}, name={choice.get('name')}, code={choice.get('code')}, id={choice.get('id')}")
                 
                 row = {
                     "value": choice_value,
