@@ -256,18 +256,38 @@ for data_type, data_list in master_data_cache.items():
             # Check if this is the field metadata structure (has properties.Choices)
             if "properties" in data_list and isinstance(data_list.get("properties"), dict):
                 choices_data = data_list["properties"].get("Choices", [])
-                if isinstance(choices_data, list):
+                if isinstance(choices_data, list) and len(choices_data) > 0:
                     choices = choices_data
+                elif isinstance(choices_data, dict):
+                    # Choices might be a dict instead of list
+                    choices = list(choices_data.values()) if choices_data else []
+                else:
+                    # Debug: log fields with no choices
+                    field_name = data_list.get("fieldName", "unknown")
+                    field_type = data_list.get("fieldType", "unknown")
+                    print(f"   ℹ️  No choices (fieldType: {field_type}, fieldName: {field_name})")
         
         # Process choices into rows
         for choice in choices:
             if isinstance(choice, dict):
-                # Extract id, code, value from choice object
+                # Extract id, code, value/name from choice object
+                # Different fields use different field names:
+                # - brands, product_status use: value
+                # - teams, seasons, years, categories use: name + id
+                # Priority: value > name > code > id
+                choice_value = (
+                    choice.get("value") or 
+                    choice.get("name") or 
+                    choice.get("code") or 
+                    choice.get("id")
+                )
+                
                 row = {
-                    "value": choice.get("value") or choice.get("id"),
-                    "label": choice.get("value") or choice.get("code") or choice.get("id"),
+                    "value": choice_value,
+                    "label": choice_value,
                     "code": choice.get("code"),
                     "id": choice.get("id"),
+                    "name": choice.get("name"),
                     "active": choice.get("active", True),
                     "data_json": json.dumps(choice),
                     "synced_at": datetime.now(timezone.utc).isoformat(),
