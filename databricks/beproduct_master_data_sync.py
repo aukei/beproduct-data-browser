@@ -46,6 +46,7 @@ import requests
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from beproduct.sdk import BeProduct
+from pyspark.sql.types import StructType, StructField, StringType, BooleanType
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -299,8 +300,18 @@ for data_type, data_list in master_data_cache.items():
                 rows.append(row)
         
         if rows:
-            # Create DataFrame
-            df = spark.createDataFrame(rows)
+            # Create DataFrame with explicit schema to handle None values
+            schema = StructType([
+                StructField("value", StringType(), nullable=False),
+                StructField("label", StringType(), nullable=False),
+                StructField("code", StringType(), nullable=True),
+                StructField("id", StringType(), nullable=True),
+                StructField("name", StringType(), nullable=True),
+                StructField("active", BooleanType(), nullable=True),
+                StructField("data_json", StringType(), nullable=False),
+                StructField("synced_at", StringType(), nullable=False),
+            ])
+            df = spark.createDataFrame(rows, schema=schema)
             
             # Drop existing table (full refresh - no tracking of edits on Databricks)
             spark.sql(f"DROP TABLE IF EXISTS {full_table_path}")
