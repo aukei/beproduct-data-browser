@@ -199,34 +199,87 @@ except Exception as e:
 print("\n[CELL 5] Join SeasonCode Mapping")
 print("-" * 80)
 
-from pyspark.sql.functions import lit, current_timestamp, col
+from pyspark.sql.functions import lit, current_timestamp, col, substring, regexp_extract
+from pyspark.sql.types import IntegerType
 
 # Map DTC seasonCode to BeProduct (Season, Year)
-mapping_table = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.dtc_season_code_mapping"
+# 
+# Mapping table structure (lft.beproduct.dtc_seasoncode_mapping):
+#   CUSTOMER (BeProduct customer code, e.g., "KTB")
+#   SEASON (BeProduct season name, e.g., "SPRING", "FALL")
+#   DTCCODE (DTC season code prefix, e.g., "SS", "FW")
+#
+# DTC season_code format: "<prefix><year>" (e.g., "SS28", "FW27")
+#   - First 2 chars = season code prefix (maps to DTCCODE in mapping)
+#   - Remaining chars = year (2 or 4 digits)
+#
+# Join logic:
+#   Spark DF columns: beproduct_customer, season_code_prefix
+#   Mapping DF columns: CUSTOMER, DTCCODE, SEASON
+
+# Step 1: Add beproduct_customer column from parameter
+print(f"Adding beproduct_customer column from parameter")
+spark_df = spark_df.withColumn("beproduct_customer", lit(BEPRODUCT_CUSTOMER))
+print(f"  beproduct_customer = {BEPRODUCT_CUSTOMER}")
+
+mapping_table = f"{TARGET_CATALOG}.{TARGET_SCHEMA}.dtc_seasoncode_mapping"
 
 try:
-    # Check if mapping table exists
+    # Load mapping table
     mapping_df = spark.table(mapping_table)
-    print(f"Found mapping table: {mapping_table}")
+    print(f"✅ Found mapping table: {mapping_table}")
+    print(f"   Columns: {mapping_df.columns}")
     
-    # Join with mapping: match on dtc_customer and season_code
-    spark_df = spark_df.join(
-        mapping_df,
-        (col("dtc_customer") == col("dtc_customer")) &
-        (col("season_code") == col("season_code")),
-        how="left"
-    ).select(
-        spark_df["*"],
-        mapping_df["beproduct_season"],
-        mapping_df["beproduct_year"]
+    # Step 2: Extract season code prefix from DTC season_code (first 2 chars)
+    # Examples: "SS28" → "SS", "FW27" → "FW"
+    spark_df = spark_df.withColumn(
+        "season_code_prefix",
+        substring(col("season_code"), 1, 2)
     )
     
+    # Step 3: Extract year from season_code (all remaining digits)
+    # Examples: "SS28" → "28", "FW27" → "27"
+    spark_df = spark_df.withColumn(
+        "season_code_year",
+        regexp_extract(col("season_code"), r"(\d+)$", 1)
+    )
+    
+    print(f"✅ Extracted components from season_code")
+    
+    # Step 4: Join with mapping table
+    # Match: beproduct_customer (from param) = CUSTOMER AND season_code_prefix = DTCCODE
+    spark_df = spark_df.join(
+        mapping_df.select(
+            col("CUSTOMER"),
+            col("DTCCODE"),
+            col("SEASON").alias("beproduct_season")
+        ),
+        (col("beproduct_customer") == mapping_df["CUSTOMER"]) &
+        (col("season_code_prefix") == mapping_df["DTCCODE"]),
+        how="left"
+    )
+    
+    # Step 5: Add beproduct_year from extracted year
+    spark_df = spark_df.withColumn(
+        "beproduct_year",
+        col("season_code_year").cast(IntegerType())
+    )
+    
+    # Step 6: Clean up temporary columns
+    spark_df = spark_df.drop("season_code_prefix", "season_code_year", "CUSTOMER", "DTCCODE")
+    
+    joined_count = spark_df.count()
     print(f"✅ Joined with seasonCode mapping")
+    print(f"   Join condition: beproduct_customer (KTB) = CUSTOMER AND season_code_prefix = DTCCODE")
     print(f"   Added columns: beproduct_season, beproduct_year")
+    print(f"   Total rows after join: {joined_count}")
     
 except Exception as e:
     print(f"⚠️  Warning: Could not join with mapping table: {e}")
+    print(f"   Mapping table path: {mapping_table}")
     print(f"   Adding NULL columns for beproduct_season and beproduct_year")
+    import traceback
+    traceback.print_exc()
     spark_df = spark_df.withColumn("beproduct_season", lit(None)) \
                        .withColumn("beproduct_year", lit(None))
 

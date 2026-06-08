@@ -1,0 +1,54 @@
+# General info
+
+## Background
+- Prepare pipeline that sync data between BeProduct and DTC
+- Both BeProduct and DTC are SaaS with RESTful API - sparsely documented
+- BeProduct has a python SDK further abstracting part of its API
+
+## SDK & API specs
+- BeProduct SDK: https://python.beproduct.com/ (doc) https://github.com/BeProduct/BeProduct.Python.SDK (implementation)
+- BeBroduct API: https://developers.beproduct.com/swagger/v1/swagger.json  (Swagger JSON)
+- BeProduct environmnts to consider: only 1 environment, data split by Folder
+- DTC API & endpoints: ./DTC-api-2026-05-08.json (postman API project dump)
+- DTC environments to consider: UAT, PRD
+
+
+## General directions
+- DTC prefer patch API (=update)to push API (=overwrite)
+- patch for existing (style + color + material)   >> keep rowid
+- push for new (style + color + material header)  >> new rowid (auto assign)
+- BeProduct data domains: Styles, Materials, Colors, Images, Blocks, Directory, MasterData
+- If Databricks is involved, tables to be put under Unity Catalog lft.beproduct
+    - Access ADB with 'databricks' CLI
+
+
+# Phase 1
+
+##objectives
+- Sync BeProduct "Style" to DTC "WIP" Requests
+- Customer to focus on = KTB (Kontoor)
+- The integration workflow to be scheduled and run entirely in Databricks as job
+
+## known data structure
+- BeProduct: Reference streamlit application implementation in ./app/ui/main.py
+    - BeProduct to Databricks: project artifacts in ./databricks/
+    - Customer = Folder Name
+    - 1 Style link with 1 Color(way) and 1 Material
+
+- DTC: Reference ./EXPLORATION_SUMMARY.md, ./databricks/dtc/README.md
+    - DTC to Databrricks: project artifacts in ./databricks/dtc/
+    - "Document" defines Json schema, "Request" instantiate "Documents", "View" is subset of fields of a "Document" applicable to any "Request" of that same type.
+    - This phrase primarily focus on "WIP" document using the "Full Version" (i.e. complete data)
+
+## Tentative flow
+- Batch based
+1. download BeProduct: Style + ColorWay + Material
+2. download DTC: all WIP documents of <workspace>. Mark requst - <brand> <session> mapping
+3. Join (1) to form full view of current BeProduct Image
+4. Compare (2) to (1):
+    4.1. For those "1" not matching any "2" > mark for PUSH
+        4.1.1. Determine if the DTC Request exists. If not, LOG ERROR
+        4.1.2. If exist, push the rows to that Request
+    4.2: For those "1" that has matching row(S) in "2", mark for Patch
+        4.2.1. For each ROW, call a patch on that Request_id + row_id
+
